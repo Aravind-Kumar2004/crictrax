@@ -1,6 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'login_screen.dart';
+import '../../login/presentation/login_screen.dart';
 
 class CinematicSplash extends StatefulWidget {
   const CinematicSplash({Key? key}) : super(key: key);
@@ -12,8 +12,6 @@ class CinematicSplash extends StatefulWidget {
 class _CinematicSplashState extends State<CinematicSplash>
     with SingleTickerProviderStateMixin {
   late AnimationController _controller;
-
-  // Define our linked animations
   late Animation<double> _glowExpand;
   late Animation<double> _textFadeIn;
   late Animation<double> _textScale;
@@ -22,13 +20,11 @@ class _CinematicSplashState extends State<CinematicSplash>
   @override
   void initState() {
     super.initState();
-    // Total Duration: 2300ms is a good TV cinematic length
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 2300),
     );
 
-    // Sequence intervals (adjusted since the image is removed)
     _glowExpand = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
         parent: _controller,
@@ -46,7 +42,7 @@ class _CinematicSplashState extends State<CinematicSplash>
     _textScale = Tween<double>(begin: 0.9, end: 1.0).animate(
       CurvedAnimation(
         parent: _controller,
-        curve: const Interval(0.4, 0.8, curve: Curves.easeOutBack), // Slight bounce
+        curve: const Interval(0.4, 0.8, curve: Curves.easeOutBack),
       ),
     );
 
@@ -57,16 +53,13 @@ class _CinematicSplashState extends State<CinematicSplash>
       ),
     );
 
-    // Start the show
-    _controller.forward().then((value) {
-      // Navigate to the new Login screen when the animation finishes
+    _controller.forward().then((_) {
       Navigator.of(context).pushReplacement(
         PageRouteBuilder(
           transitionDuration: const Duration(milliseconds: 800),
           pageBuilder: (_, __, ___) => const LoginScreen(),
-          transitionsBuilder: (_, animation, __, child) {
-            return FadeTransition(opacity: animation, child: child);
-          },
+          transitionsBuilder: (_, animation, __, child) =>
+              FadeTransition(opacity: animation, child: child),
         ),
       );
     });
@@ -81,33 +74,28 @@ class _CinematicSplashState extends State<CinematicSplash>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF050A18), // Midnight Blue
+      backgroundColor: const Color(0xFF050A18),
       body: Stack(
         alignment: Alignment.center,
         children: [
-          // The Glow Shockwave (Energy Blue)
           AnimatedBuilder(
             animation: _glowExpand,
-            builder: (context, child) {
-              return Container(
-                width: 400 * _glowExpand.value,
-                height: 400 * _glowExpand.value,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: const Color(0xFF00A3FF).withOpacity(
-                          (1.0 - _glowExpand.value).clamp(0.0, 0.5)),
-                      blurRadius: 120 * _glowExpand.value,
-                      spreadRadius: 30 * _glowExpand.value,
-                    ),
-                  ],
-                ),
-              );
-            },
+            builder: (context, child) => Container(
+              width: 400 * _glowExpand.value,
+              height: 400 * _glowExpand.value,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF00A3FF).withOpacity(
+                        (1.0 - _glowExpand.value).clamp(0.0, 0.5)),
+                    blurRadius: 120 * _glowExpand.value,
+                    spreadRadius: 30 * _glowExpand.value,
+                  ),
+                ],
+              ),
+            ),
           ),
-
-          // The Final CRICTRAX Branding Reveal
           FadeTransition(
             opacity: _textFadeIn,
             child: ScaleTransition(
@@ -116,25 +104,23 @@ class _CinematicSplashState extends State<CinematicSplash>
                 'CRICTRAX',
                 style: TextStyle(
                   color: Colors.white,
-                  fontSize: 72, // Massive for TV
+                  fontSize: 72,
                   fontWeight: FontWeight.bold,
-                  letterSpacing: 8, // Athletic look
+                  letterSpacing: 8,
                 ),
               ),
             ),
           ),
-
-          // The Frosted Glass Exit Transition
           AnimatedBuilder(
-              animation: _backgroundBlur,
-              builder: (context, child) {
-                return BackdropFilter(
-                  filter: ImageFilter.blur(
-                      sigmaX: _backgroundBlur.value,
-                      sigmaY: _backgroundBlur.value),
-                  child: Container(color: Colors.transparent),
-                );
-              }),
+            animation: _backgroundBlur,
+            builder: (context, child) => BackdropFilter(
+              filter: ImageFilter.blur(
+                sigmaX: _backgroundBlur.value,
+                sigmaY: _backgroundBlur.value,
+              ),
+              child: Container(color: Colors.transparent),
+            ),
+          ),
         ],
       ),
     );
