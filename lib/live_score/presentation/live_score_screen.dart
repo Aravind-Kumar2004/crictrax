@@ -30,7 +30,6 @@ class _LiveScoreScreenState extends State<LiveScoreScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            // Back button row
             Padding(
               padding: const EdgeInsets.all(12),
               child: Row(
@@ -50,8 +49,6 @@ class _LiveScoreScreenState extends State<LiveScoreScreen> {
                 ],
               ),
             ),
-
-            // Main broadcast video placeholder area
             Expanded(
               child: Center(
                 child: Column(
@@ -72,8 +69,6 @@ class _LiveScoreScreenState extends State<LiveScoreScreen> {
                 ),
               ),
             ),
-
-            // Broadcast-style score bar at bottom
             StreamBuilder<QuerySnapshot>(
               stream: _repo.watchInnings(widget.tournamentId, widget.matchId),
               builder: (context, inningsSnap) {
@@ -93,110 +88,142 @@ class _LiveScoreScreenState extends State<LiveScoreScreen> {
 
   Widget _buildWaitingBar() {
     return Container(
-      height: 90,
+      height: 92,
       color: const Color(0xFF0A0E1A),
       child: Center(
         child: Text(
           'Waiting for match to start...',
-          style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 14),
+          style: TextStyle(
+              color: Colors.white.withOpacity(0.4), fontSize: 14),
         ),
       ),
     );
   }
 
+  String _resolveBattingTeamName(Map<String, dynamic> innData) {
+    final name = (innData['battingTeamName'] ?? '').toString().trim();
+    if (name.isNotEmpty) return name;
+
+    final id = (innData['battingTeamId'] ?? '').toString().trim();
+    if (id == widget.team1Name) return widget.team1Name;
+    if (id == widget.team2Name) return widget.team2Name;
+    if (id.length > 15) return widget.team1Name;
+
+    return id.isNotEmpty ? id : widget.team1Name;
+  }
+
+  String _resolveOpponentName(String battingTeamName) {
+    if (battingTeamName == widget.team1Name) return widget.team2Name;
+    if (battingTeamName == widget.team2Name) return widget.team1Name;
+    if (widget.team1Name.isNotEmpty &&
+        battingTeamName
+            .toLowerCase()
+            .contains(widget.team1Name.toLowerCase())) {
+      return widget.team2Name;
+    }
+    return widget.team2Name;
+  }
+
   Widget _buildScoreBar(String inningsId, Map<String, dynamic> innData) {
-    final battingTeamName =
-    (innData['battingTeamName'] ?? innData['battingTeamId'] ?? '') as String;
+    final battingTeamName = _resolveBattingTeamName(innData);
+    final opponentName = _resolveOpponentName(battingTeamName);
+
     final runs = innData['totalRuns'] ?? innData['runs'] ?? 0;
     final wickets = innData['totalWickets'] ?? innData['wickets'] ?? 0;
     final overs = innData['totalOvers'] ?? innData['overs'] ?? 0;
     final crr = innData['currentRunRate'] ?? innData['crr'] ?? 0.0;
+    final lastBalls = _parseLastBalls(innData);
 
     return Container(
       decoration: const BoxDecoration(
-        color: Color(0xFF0A1A3D),
-        border: Border(top: BorderSide(color: Color(0xFF1E3A6E), width: 1)),
+        color: Color(0xFF08162E),
+        border:
+        Border(top: BorderSide(color: Color(0xFF1E3A6E), width: 1.5)),
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      child: IntrinsicHeight(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // ── Column 1: Batting team + score ──
-            Expanded(
-              flex: 28,
-              child: _Col1BattingTeam(
-                teamName: battingTeamName,
-                runs: runs,
-                wickets: wickets,
-                overs: overs,
-              ),
+      height: 92, // fixed — prevents all overflow
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // COL 1
+          _Col1BattingTeam(
+            teamName: battingTeamName,
+            runs: runs,
+            wickets: wickets,
+            overs: overs,
+          ),
+          _vDivider(),
+          // COL 2
+          Expanded(
+            flex: 36,
+            child: StreamBuilder<QuerySnapshot>(
+              stream: _repo.watchBatsmen(
+                  widget.tournamentId, widget.matchId, inningsId),
+              builder: (context, snap) {
+                if (!snap.hasData) return const SizedBox();
+                final batters = snap.data!.docs
+                    .map((d) => d.data() as Map<String, dynamic>)
+                    .where((b) => b['isOut'] != true)
+                    .toList();
+                return _Col2Batsmen(batters: batters);
+              },
             ),
-
-            _divider(),
-
-            // ── Column 2: Striker + Non-striker ──
-            Expanded(
-              flex: 38,
-              child: StreamBuilder<QuerySnapshot>(
-                stream: _repo.watchBatsmen(
-                    widget.tournamentId, widget.matchId, inningsId),
-                builder: (context, snap) {
-                  if (!snap.hasData) return const SizedBox();
-                  final batters = snap.data!.docs
+          ),
+          _vDivider(),
+          // COL 3
+          Expanded(
+            flex: 42,
+            child: StreamBuilder<QuerySnapshot>(
+              stream: _repo.watchBowlers(
+                  widget.tournamentId, widget.matchId, inningsId),
+              builder: (context, snap) {
+                Map<String, dynamic>? bowler;
+                if (snap.hasData && snap.data!.docs.isNotEmpty) {
+                  final bowling = snap.data!.docs
                       .map((d) => d.data() as Map<String, dynamic>)
-                      .where((b) => b['isOut'] != true)
-                      .take(2)
+                      .where((b) => b['isBowling'] == true)
                       .toList();
-                  return _Col2Batsmen(batters: batters);
-                },
-              ),
+                  bowler = bowling.isNotEmpty
+                      ? bowling.first
+                      : snap.data!.docs.last.data()
+                  as Map<String, dynamic>;
+                }
+                return _Col3Panel(
+                  crr: crr,
+                  bowler: bowler,
+                  opponentName: opponentName,
+                  lastBalls: lastBalls,
+                );
+              },
             ),
-
-            _divider(),
-
-            // ── Column 3: Run rate + Bowler ──
-            Expanded(
-              flex: 34,
-              child: StreamBuilder<QuerySnapshot>(
-                stream: _repo.watchBowlers(
-                    widget.tournamentId, widget.matchId, inningsId),
-                builder: (context, snap) {
-                  Map<String, dynamic>? bowler;
-                  if (snap.hasData && snap.data!.docs.isNotEmpty) {
-                    bowler = snap.data!.docs
-                        .map((d) => d.data() as Map<String, dynamic>)
-                        .firstWhere(
-                          (b) => b['isBowling'] == true,
-                      orElse: () => snap.data!.docs.last.data()
-                      as Map<String, dynamic>,
-                    );
-                  }
-                  return _Col3RunRateBowler(crr: crr, bowler: bowler);
-                },
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _divider() => Container(
+  List<String> _parseLastBalls(Map<String, dynamic> innData) {
+    try {
+      final raw =
+          innData['lastSixBalls'] ?? innData['recentBalls'] ?? [];
+      if (raw is List) {
+        return raw.map((e) => e.toString()).take(6).toList();
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  Widget _vDivider() => Container(
     width: 1,
-    margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
     color: Colors.white.withOpacity(0.12),
   );
 }
 
-// ─────────────────────────────────────────
-// Column 1 – Batting team name, score, overs
-// ─────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+// COL 1 — [Badge] [Name / Overs]  [Score / Wkts]
+// ═══════════════════════════════════════════════════════════════
 class _Col1BattingTeam extends StatelessWidget {
   final String teamName;
-  final dynamic runs;
-  final dynamic wickets;
-  final dynamic overs;
+  final dynamic runs, wickets, overs;
 
   const _Col1BattingTeam({
     required this.teamName,
@@ -205,271 +232,407 @@ class _Col1BattingTeam extends StatelessWidget {
     required this.overs,
   });
 
+  String _abbr(String n) {
+    if (n.isEmpty) return '—';
+    final w = n.trim().split(RegExp(r'\s+'));
+    if (w.length >= 2) return (w[0][0] + w[1][0]).toUpperCase();
+    return n.substring(0, n.length.clamp(0, 4)).toUpperCase();
+  }
+
   @override
   Widget build(BuildContext context) {
-    // Abbreviate long team names to avoid overflow
-    final abbr = teamName.length > 10
-        ? teamName.substring(0, 3).toUpperCase()
-        : teamName.toUpperCase();
-
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Team name badge row
-        Row(
-          children: [
-            _TeamBadge(teamName: teamName),
-            const SizedBox(width: 6),
-            Flexible(
-              child: Text(
-                abbr,
-                overflow: TextOverflow.ellipsis,
+    return Container(
+      width: 170,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          _TeamBadge(teamName: teamName),
+          const SizedBox(width: 8),
+          // Name + Overs
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _abbr(teamName),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.6,
+                  ),
+                ),
+                const SizedBox(height: 1),
+                Text(
+                  '$overs OVR',
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.5),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Score
+          Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                '$runs',
                 style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0.5,
+                  color: Color(0xFFFF6B35),
+                  fontSize: 28,
+                  fontWeight: FontWeight.w900,
+                  height: 1,
                 ),
               ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 4),
-        // Score
-        Text(
-          '$runs-$wickets',
-          style: const TextStyle(
-            color: Color(0xFFFF6B35),
-            fontSize: 28,
-            fontWeight: FontWeight.w800,
-            height: 1,
+              Text(
+                '-$wickets wkts',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.6),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
           ),
-        ),
-        const SizedBox(height: 2),
-        // Overs
-        Text(
-          '$overs OVR',
-          style: TextStyle(
-            color: Colors.white.withOpacity(0.5),
-            fontSize: 10,
-            fontWeight: FontWeight.w600,
-            letterSpacing: 0.4,
-          ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
 
-// ─────────────────────────────────────────
-// Column 2 – Striker & Non-striker
-// ─────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+// COL 2 — ▶ Striker  Runs  Balls
+//            Non-striker  Runs  Balls
+// ═══════════════════════════════════════════════════════════════
 class _Col2Batsmen extends StatelessWidget {
   final List<Map<String, dynamic>> batters;
-
   const _Col2Batsmen({required this.batters});
 
   @override
   Widget build(BuildContext context) {
-    // Sort: striker first
     final sorted = [...batters]..sort((a, b) {
-      final aStrike =
+      final aS =
       (a['isOnStrike'] == true || a['onStrike'] == true) ? 0 : 1;
-      final bStrike =
+      final bS =
       (b['isOnStrike'] == true || b['onStrike'] == true) ? 0 : 1;
-      return aStrike.compareTo(bStrike);
+      return aS.compareTo(bS);
     });
+    final display = sorted.take(2).toList();
 
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: sorted.map((b) {
-        final name = (b['playerName'] ?? '').toString();
-        final runs = b['runs'] ?? 0;
-        final balls = b['ballsFaced'] ?? 0;
-        final onStrike =
-            b['isOnStrike'] == true || b['onStrike'] == true;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
+        children: display.map((b) {
+          final name = (b['playerName'] ?? b['name'] ?? '').toString();
+          final runs = b['runs'] ?? b['runsScored'] ?? 0;
+          final balls = b['ballsFaced'] ?? b['balls'] ?? 0;
+          final onStrike =
+              b['isOnStrike'] == true || b['onStrike'] == true;
 
-        return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 3),
-          child: Row(
-            children: [
-              // Strike indicator
-              SizedBox(
-                width: 14,
-                child: onStrike
-                    ? const Icon(Icons.play_arrow,
-                    color: Color(0xFFFF6B35), size: 12)
-                    : null,
-              ),
-              // Player name
-              Expanded(
-                child: Text(
-                  name.isEmpty ? '—' : name.toUpperCase(),
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: onStrike ? Colors.white : Colors.white70,
-                    fontSize: 11,
-                    fontWeight:
-                    onStrike ? FontWeight.w700 : FontWeight.w500,
-                    letterSpacing: 0.3,
+          final words = name.trim().split(RegExp(r'\s+'));
+          final displayName = words.length >= 2
+              ? words.last.toUpperCase()
+              : name.length > 10
+              ? '${name.substring(0, 10).toUpperCase()}.'
+              : name.toUpperCase();
+
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 16,
+                  child: onStrike
+                      ? const Icon(Icons.play_arrow_rounded,
+                      color: Color(0xFFFF6B35), size: 14)
+                      : null,
+                ),
+                SizedBox(
+                  width: 70,
+                  child: Text(
+                    displayName.isEmpty ? '—' : displayName,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: onStrike ? Colors.white : Colors.white60,
+                      fontSize: 12,
+                      fontWeight: onStrike
+                          ? FontWeight.w700
+                          : FontWeight.w400,
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 6),
-              // Runs
-              Text(
-                '$runs',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w800,
+                const Spacer(),
+                Text(
+                  '$runs',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 3),
-              // Balls
-              Text(
-                '($balls)',
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.45),
-                  fontSize: 11,
+                const SizedBox(width: 4),
+                Text(
+                  '$balls',
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.45),
+                    fontSize: 11,
+                  ),
                 ),
-              ),
-            ],
-          ),
-        );
-      }).toList(),
+              ],
+            ),
+          );
+        }).toList(),
+      ),
     );
   }
 }
 
-// ─────────────────────────────────────────
-// Column 3 – Run rate + Bowler stats
-// ─────────────────────────────────────────
-class _Col3RunRateBowler extends StatelessWidget {
+// ═══════════════════════════════════════════════════════════════
+// COL 3 — [RUN-RATE square] [v Opp] [Bowler name / stats / balls]
+// ═══════════════════════════════════════════════════════════════
+class _Col3Panel extends StatelessWidget {
   final dynamic crr;
   final Map<String, dynamic>? bowler;
+  final String opponentName;
+  final List<String> lastBalls;
 
-  const _Col3RunRateBowler({required this.crr, this.bowler});
+  const _Col3Panel({
+    required this.crr,
+    required this.opponentName,
+    this.bowler,
+    this.lastBalls = const [],
+  });
 
   @override
   Widget build(BuildContext context) {
-    final crrStr =
-    crr is double ? crr.toStringAsFixed(2) : crr.toString();
+    final crrStr = crr is double
+        ? crr.toStringAsFixed(2)
+        : double.tryParse(crr.toString())?.toStringAsFixed(2) ?? '0.00';
 
     final bowlerName =
-    bowler != null ? (bowler!['playerName'] ?? '').toString() : '—';
+    (bowler?['playerName'] ?? bowler?['name'] ?? '—').toString();
     final wkts = bowler?['wickets'] ?? 0;
-    final runsConceded = bowler?['runsConceded'] ?? 0;
+    final runsConceded = bowler?['runsConceded'] ?? bowler?['runs'] ?? 0;
     final bowlerOvers = bowler?['overs'] ?? 0;
-    final bowlerAbbr = bowlerName.length > 10
-        ? bowlerName.substring(0, 10)
-        : bowlerName;
 
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      crossAxisAlignment: CrossAxisAlignment.end,
+    final bWords = bowlerName.trim().split(RegExp(r'\s+'));
+    final bowlerDisplay = bWords.length >= 2
+        ? bWords.last.toUpperCase()
+        : bowlerName.length > 8
+        ? bowlerName.substring(0, 8).toUpperCase()
+        : bowlerName.toUpperCase();
+
+    final oWords = opponentName.trim().split(RegExp(r'\s+'));
+    final oppAbbr = oWords.length >= 2
+        ? (oWords[0][0] + oWords[1][0]).toUpperCase()
+        : opponentName
+        .substring(0, opponentName.length.clamp(0, 3))
+        .toUpperCase();
+
+    final padded = List<String>.filled(6, '');
+    for (int i = 0; i < lastBalls.length && i < 6; i++) {
+      padded[i] = lastBalls[i];
+    }
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Run-rate chip
-        Container(
-          padding:
-          const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-          decoration: BoxDecoration(
-            color: const Color(0xFF0D3B6E),
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(
-                color: const Color(0xFF1E6BB0).withOpacity(0.6), width: 1),
+        // Run Rate — square filling full bar height
+        AspectRatio(
+          aspectRatio: 1,
+          child: Container(
+            color: const Color(0xFF1565C0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  crrStr,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    height: 1,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                const Text(
+                  'RUN\nRATE',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Color(0xFFBBDEFB),
+                    fontSize: 8,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.5,
+                    height: 1.1,
+                  ),
+                ),
+              ],
+            ),
           ),
+        ),
+
+        // Opponent
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
           child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
             children: [
+              const Text('v',
+                  style:
+                  TextStyle(color: Colors.white54, fontSize: 11)),
+              const SizedBox(height: 3),
+              _TeamBadge(teamName: opponentName),
+              const SizedBox(height: 3),
               Text(
-                crrStr,
+                oppAbbr,
                 style: const TextStyle(
                   color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const Text(
-                'RUN-RATE',
-                style: TextStyle(
-                  color: Color(0xFF7FBFFF),
-                  fontSize: 8,
-                  letterSpacing: 0.8,
-                  fontWeight: FontWeight.w600,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
             ],
           ),
         ),
-        const SizedBox(height: 6),
-        // Bowler row
-        Row(
-          mainAxisAlignment: MainAxisAlignment.end,
-          children: [
-            Flexible(
-              child: Text(
-                bowlerAbbr.isEmpty ? '—' : bowlerAbbr.toUpperCase(),
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.right,
-                style: const TextStyle(
-                  color: Colors.white70,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0.3,
+
+        // Bowler + ball dots
+        Expanded(
+          child: Padding(
+            padding:
+            const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  bowlerDisplay == '—' ? '—' : bowlerDisplay,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.3,
+                  ),
                 ),
-              ),
+                const SizedBox(height: 1),
+                Row(
+                  children: [
+                    Text(
+                      '$wkts-$runsConceded',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(width: 5),
+                    Text(
+                      '$bowlerOvers',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.5),
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: padded.map((ball) {
+                    final empty = ball.isEmpty;
+                    final col = _ballColor(ball);
+                    return Container(
+                      width: 19,
+                      height: 15,
+                      margin: const EdgeInsets.only(right: 2),
+                      decoration: BoxDecoration(
+                        color: empty
+                            ? Colors.white.withOpacity(0.07)
+                            : col.withOpacity(0.25),
+                        borderRadius: BorderRadius.circular(2),
+                        border: Border.all(
+                          color: empty
+                              ? Colors.white.withOpacity(0.18)
+                              : col.withOpacity(0.8),
+                          width: 1,
+                        ),
+                      ),
+                      child: Center(
+                        child: empty
+                            ? null
+                            : Text(
+                          ball,
+                          style: TextStyle(
+                            color: col,
+                            fontSize: 8,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ],
             ),
-            const SizedBox(width: 6),
-            Text(
-              '$wkts-$runsConceded',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(width: 4),
-            Text(
-              '$bowlerOvers',
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.45),
-                fontSize: 11,
-              ),
-            ),
-          ],
+          ),
         ),
       ],
     );
   }
+
+  Color _ballColor(String ball) {
+    switch (ball) {
+      case 'W':
+        return const Color(0xFFFF3B30);
+      case '6':
+        return const Color(0xFF34C759);
+      case '4':
+        return const Color(0xFF007AFF);
+      case '0':
+        return Colors.white30;
+      default:
+        return Colors.white70;
+    }
+  }
 }
 
-// ─────────────────────────────────────────
-// Shared team badge widget
-// ─────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+// Shared — Team Badge
+// ═══════════════════════════════════════════════════════════════
 class _TeamBadge extends StatelessWidget {
   final String teamName;
-
   const _TeamBadge({required this.teamName});
 
   @override
   Widget build(BuildContext context) {
-    final initial = teamName.isNotEmpty ? teamName[0].toUpperCase() : '?';
+    final initial =
+    teamName.isNotEmpty ? teamName[0].toUpperCase() : '?';
     return Container(
-      width: 26,
-      height: 26,
+      width: 28,
+      height: 28,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         color: const Color(0xFF00A3FF).withOpacity(0.15),
-        border: Border.all(color: const Color(0xFF00A3FF), width: 1.2),
+        border: Border.all(color: const Color(0xFF00A3FF), width: 1.5),
       ),
       child: Center(
         child: Text(
           initial,
           style: const TextStyle(
             color: Color(0xFF00A3FF),
-            fontSize: 11,
+            fontSize: 12,
             fontWeight: FontWeight.bold,
           ),
         ),
