@@ -1,5 +1,6 @@
+import 'package:crictrax/login/presentation/widgets/tv_qr_section.dart';
 import 'package:flutter/material.dart';
-import ' widgets/tv_qr_section.dart';
+
 import '../../dashboard/presentation/dashboard_screen.dart';
 import '../data/repositories/auth_repository.dart';
 
