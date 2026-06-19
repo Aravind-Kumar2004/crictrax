@@ -49,7 +49,20 @@ class LiveScoreRepository {
         .collection('bowlers')
         .snapshots();
   }
-
+  Stream<QuerySnapshot> watchCurrentOverBalls(
+      String tournamentId, String matchId, String inningsId, int overNumber) {
+    return _db
+        .collection('tournaments')
+        .doc(tournamentId)
+        .collection('matches')
+        .doc(matchId)
+        .collection('innings')
+        .doc(inningsId)
+        .collection('balls')
+        .where('overNumber', isEqualTo: overNumber)
+        .orderBy('ballInOver')
+        .snapshots();
+  }
   Future<String> resolvePlayerName(
       String tournamentId, String teamId, String playerId) async {
     if (playerId.isEmpty) return 'Unknown Player';

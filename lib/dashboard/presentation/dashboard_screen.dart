@@ -1,10 +1,9 @@
 import 'dart:async';
 import 'dart:ui';
-import 'package:crictrax/dashboard/data/models/repositories/dashboard_repository.dart';
-import 'package:crictrax/dashboard/data/models/tournament_model.dart';
 import 'package:flutter/material.dart';
 
-
+import '../ data/models/repositories/dashboard_repository.dart';
+import '../ data/models/tournament_model.dart';
 import '../../login/presentation/login_screen.dart';
 import '../../tournament_detail/presentation/tournament_detail_screen.dart';
 import 'widgets/tournament_card_widget.dart';
