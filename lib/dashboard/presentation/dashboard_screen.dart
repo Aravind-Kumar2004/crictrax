@@ -7,17 +7,20 @@ import '../ data/models/tournament_model.dart';
 import '../../login/presentation/login_screen.dart';
 import '../../tournament_detail/presentation/tournament_detail_screen.dart';
 import 'widgets/tournament_card_widget.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class DashboardScreen extends StatefulWidget {
-  final String userId;
+final String userId;
   final String displayName;
   final String email;
+  final String? sessionId;
 
   const DashboardScreen({
     Key? key,
     required this.userId,
     this.displayName = '',
     this.email = '',
+    this.sessionId,
   }) : super(key: key);
 
   @override
@@ -25,15 +28,107 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  final _repo = DashboardRepository();
+ final _repo = DashboardRepository();
   List<TournamentModel> _tournaments = [];
   bool _loading = true;
   int _selectedNavIndex = 0;
+  StreamSubscription? _logoutSub;
 
   @override
   void initState() {
     super.initState();
     _fetchTournaments();
+    _listenForLogout();
+  }
+
+ void _listenForLogout() {
+    if (widget.sessionId == null) {
+      debugPrint('⚠️ DashboardScreen: no sessionId provided — TV forced-logout listener not attached');
+      return;
+    }
+    debugPrint('👂 DashboardScreen: listening for logout on tv_sessions/${widget.sessionId}');
+    _logoutSub = FirebaseFirestore.instance
+        .collection('tv_sessions')
+        .doc(widget.sessionId)
+        .snapshots()
+        .listen((snap) {
+      if (!snap.exists) return;
+      final data = snap.data()!;
+      if (data['loggedOut'] == true && mounted) {
+        debugPrint('🚪 DashboardScreen: loggedOut flag detected, showing forced logout modal');
+        _logoutSub?.cancel();
+        _showForcedLogoutModal();
+      }
+    }, onError: (e) {
+      debugPrint('❌ DashboardScreen: logout listener error: $e');
+    });
+  }
+ void _showForcedLogoutModal() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      barrierColor: Colors.black87,
+      builder: (_) => Dialog(
+        backgroundColor: const Color(0xFF0D1117),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 48),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.red.withOpacity(0.1),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.red.withOpacity(0.3), width: 1.5),
+                ),
+                child: const Icon(Icons.logout_rounded, color: Colors.redAccent, size: 48),
+              ),
+              const SizedBox(height: 28),
+              const Text(
+                'You have been Logged out',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Go back and Login to continue.',
+                style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 15, height: 1.5),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 36),
+              const SizedBox(
+                width: 28,
+                height: 28,
+                child: CircularProgressIndicator(
+                  color: Color(0xFF00A3FF),
+                  strokeWidth: 3,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    Future.delayed(const Duration(seconds: 2), () {
+      if (!mounted) return;
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+        (route) => false,
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    _logoutSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _fetchTournaments() async {

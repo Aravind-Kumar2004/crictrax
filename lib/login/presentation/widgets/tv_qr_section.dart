@@ -87,11 +87,12 @@ class _TvQrSectionState extends State<TvQrSection> {
               PageRouteBuilder(
                 transitionDuration:
                 const Duration(milliseconds: 800),
-                pageBuilder: (_, __, ___) => DashboardScreen(
-                  userId: userId,
-                  displayName: displayName,
-                  email: email,
-                ),
+              pageBuilder: (_, __, ___) => DashboardScreen(
+  userId: userId,
+  displayName: displayName,
+  email: email,
+  sessionId: sessionId,
+),
                 transitionsBuilder: (_, animation, __, child) =>
                     FadeTransition(opacity: animation, child: child),
               ),
