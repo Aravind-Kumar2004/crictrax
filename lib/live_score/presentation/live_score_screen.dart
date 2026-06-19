@@ -103,9 +103,6 @@ class _LiveScoreScreenState extends State<LiveScoreScreen> {
                     return StreamBuilder<QuerySnapshot>(
                       stream: _repo.watchInnings(widget.tournamentId, widget.matchId),
                       builder: (context, inningsSnap) {
-                        // ── FIX 1: connection state vs empty data are different things.
-                        // Previously both showed the same waiting bar, hiding real errors
-                        // and making it look "stuck" even when Firestore is fine but slow.
                         if (inningsSnap.hasError) {
                           return _buildErrorBar(inningsSnap.error.toString());
                         }
@@ -119,13 +116,24 @@ class _LiveScoreScreenState extends State<LiveScoreScreen> {
                         }
 
                         final docs = inningsSnap.data!.docs;
-                        final currentDoc = docs.last;
+
+                        // ── FIX: pick the CURRENT innings explicitly instead of trusting
+                        // Firestore's unordered doc list. Prefer the innings flagged
+                        // isSecondInnings == true (the most recently started one) if it
+                        // exists; otherwise fall back to the only/first innings present.
+                        // This replaces the old `docs.last` which depended on an
+                        // orderBy that was silently filtering everything out.
+                        final secondInningsDocs = docs.where((d) {
+                          final data = d.data() as Map<String, dynamic>;
+                          return data['isSecondInnings'] == true;
+                        }).toList();
+
+                        final currentDoc = secondInningsDocs.isNotEmpty
+                            ? secondInningsDocs.first
+                            : docs.first;
+
                         final innData = currentDoc.data() as Map<String, dynamic>;
 
-                        // ── FIX 2: cache the last good (id, data) pair so that if a
-                        // transient empty/error snapshot arrives during the innings-2
-                        // creation transaction, we keep rendering the previous innings
-                        // bar instead of flashing back to "Waiting for match to start".
                         _lastInningsId = currentDoc.id;
                         _lastInningsData = innData;
 

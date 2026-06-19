@@ -28,11 +28,8 @@ class LiveScoreRepository {
         .collection('matches')
         .doc(matchId)
         .collection('innings')
-        .orderBy('inningsNumber')
         .snapshots()
         .handleError((error) {
-      // Surface to console immediately instead of the UI silently
-      // falling back to the waiting bar with no diagnostic trail.
       // ignore: avoid_print
       print('watchInnings ERROR (tournament=$tournamentId, match=$matchId): $error');
     });
