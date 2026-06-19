@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import '../data/models/repositories/live_score_repository.dart';
@@ -23,6 +25,16 @@ class LiveScoreScreen extends StatefulWidget {
 
 class _LiveScoreScreenState extends State<LiveScoreScreen> {
   final _repo = LiveScoreRepository();
+  bool _hasNavigatedAway = false;
+  Timer? _autoDismissTimer;
+  String? _lastInningsId;
+  Map<String, dynamic>? _lastInningsData;
+
+  @override
+  void dispose() {
+    _autoDismissTimer?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -69,22 +81,64 @@ class _LiveScoreScreenState extends State<LiveScoreScreen> {
                     ),
                   ),
                 ),
-                StreamBuilder<QuerySnapshot>(
-                  stream: _repo.watchInnings(widget.tournamentId, widget.matchId),
-                  builder: (context, inningsSnap) {
-                    if (!inningsSnap.hasData || inningsSnap.data!.docs.isEmpty) {
-                      return _buildWaitingBar();
+
+                // Listen to the MATCH document itself for completion status
+                StreamBuilder<DocumentSnapshot>(
+                  stream: _repo.watchMatch(widget.tournamentId, widget.matchId),
+                  builder: (context, matchSnap) {
+                    if (matchSnap.hasData && matchSnap.data!.exists) {
+                      final matchData = matchSnap.data!.data() as Map<String, dynamic>? ?? {};
+                      final isCompleted = matchData['isCompleted'] == true;
+
+                      if (isCompleted && !_hasNavigatedAway) {
+                        _hasNavigatedAway = true;
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (mounted) {
+                            _showMatchEndedAndPop(context, matchData);
+                          }
+                        });
+                      }
                     }
-                    final currentDoc = inningsSnap.data!.docs.last;
-                    final innData = currentDoc.data() as Map<String, dynamic>;
-                    return _LiveScoreBar(
-                      tournamentId: widget.tournamentId,
-                      matchId: widget.matchId,
-                      inningsId: currentDoc.id,
-                      innData: innData,
-                      team1Name: widget.team1Name,
-                      team2Name: widget.team2Name,
-                      repo: _repo,
+
+                    return StreamBuilder<QuerySnapshot>(
+                      stream: _repo.watchInnings(widget.tournamentId, widget.matchId),
+                      builder: (context, inningsSnap) {
+                        // ── FIX 1: connection state vs empty data are different things.
+                        // Previously both showed the same waiting bar, hiding real errors
+                        // and making it look "stuck" even when Firestore is fine but slow.
+                        if (inningsSnap.hasError) {
+                          return _buildErrorBar(inningsSnap.error.toString());
+                        }
+
+                        if (inningsSnap.connectionState == ConnectionState.waiting) {
+                          return _buildWaitingBar(label: 'Connecting...');
+                        }
+
+                        if (!inningsSnap.hasData || inningsSnap.data!.docs.isEmpty) {
+                          return _buildWaitingBar(label: 'Waiting for match to start...');
+                        }
+
+                        final docs = inningsSnap.data!.docs;
+                        final currentDoc = docs.last;
+                        final innData = currentDoc.data() as Map<String, dynamic>;
+
+                        // ── FIX 2: cache the last good (id, data) pair so that if a
+                        // transient empty/error snapshot arrives during the innings-2
+                        // creation transaction, we keep rendering the previous innings
+                        // bar instead of flashing back to "Waiting for match to start".
+                        _lastInningsId = currentDoc.id;
+                        _lastInningsData = innData;
+
+                        return _LiveScoreBar(
+                          tournamentId: widget.tournamentId,
+                          matchId: widget.matchId,
+                          inningsId: currentDoc.id,
+                          innData: innData,
+                          team1Name: widget.team1Name,
+                          team2Name: widget.team2Name,
+                          repo: _repo,
+                        );
+                      },
                     );
                   },
                 ),
@@ -96,19 +150,120 @@ class _LiveScoreScreenState extends State<LiveScoreScreen> {
     );
   }
 
-  Widget _buildWaitingBar() {
+  void _showMatchEndedAndPop(BuildContext context, Map<String, dynamic> matchData) {
+    final resultText = matchData['result'] as String? ?? 'Match Completed';
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF0C1F3D),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: const [
+            Icon(Icons.emoji_events, color: Color(0xFFFFD700)),
+            SizedBox(width: 10),
+            Text('Match Ended', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Text(resultText, style: const TextStyle(color: Colors.white70, fontSize: 15)),
+        actions: [
+          ElevatedButton(
+            onPressed: () => _dismissAndPop(dialogContext, context),
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A3FF)),
+            child: const Text('Back to Tournament', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    _autoDismissTimer?.cancel();
+    _autoDismissTimer = Timer(const Duration(seconds: 4), () {
+      if (!mounted) return;
+      if (Navigator.of(context, rootNavigator: true).canPop()) {
+        _dismissAndPop(context, context);
+      }
+    });
+  }
+
+  void _dismissAndPop(BuildContext dialogContext, BuildContext screenContext) {
+    _autoDismissTimer?.cancel();
+    if (Navigator.of(dialogContext, rootNavigator: true).canPop()) {
+      Navigator.of(dialogContext, rootNavigator: true).pop();
+    }
+    if (Navigator.of(screenContext).canPop()) {
+      Navigator.of(screenContext).pop();
+    }
+  }
+
+  Widget _buildWaitingBar({String label = 'Waiting for match to start...'}) {
+    // ── FIX: if we have a cached innings from before this snapshot,
+    // show that instead of the generic waiting message. This covers
+    // the innings-2 creation window where watchInnings briefly emits
+    // an empty/incomplete snapshot.
+    if (_lastInningsId != null && _lastInningsData != null) {
+      return _LiveScoreBar(
+        tournamentId: widget.tournamentId,
+        matchId: widget.matchId,
+        inningsId: _lastInningsId!,
+        innData: _lastInningsData!,
+        team1Name: widget.team1Name,
+        team2Name: widget.team2Name,
+        repo: _repo,
+      );
+    }
+
     return Container(
       height: 110,
       color: const Color(0xFF0A0E1A),
       child: Center(
-        child: Text(
-          'Waiting for match to start...',
-          style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 14),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF00A3FF)),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              label,
+              style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 14),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildErrorBar(String error) {
+    // ── FIX: surfaces real Firestore errors (missing index, permission
+    // denied, etc) instead of masking them as "waiting for match".
+    return Container(
+      height: 110,
+      color: const Color(0xFF2A0E0E),
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Center(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline, color: Colors.redAccent, size: 18),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                'Live data error: $error',
+                overflow: TextOverflow.ellipsis,
+                maxLines: 2,
+                style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 }
+
 
 // ═══════════════════════════════════════════════════════════════
 // MAIN SCORE BAR — aggregates batsmen+bowlers to compute live totals
@@ -193,7 +348,14 @@ class _LiveScoreBar extends StatelessWidget {
 
           final completedOvers = totalBalls ~/ 6;
           final ballsInOver = totalBalls % 6;
-          final currentOverNumber = completedOvers;
+          // If totalBalls is an exact multiple of 6 (an over just finished),
+          // keep showing the over that JUST completed until the first ball
+          // of the next over is actually recorded in the 'balls' subcollection.
+          // Without this, the tracker briefly queries an over with zero docs
+          // and renders as empty even though runs are already on the board.
+          final currentOverNumber = (ballsInOver == 0 && totalBalls > 0)
+              ? completedOvers - 1
+              : completedOvers;
           final oversDisplay = innData['totalOvers'] != null && totalBalls == 0
               ? innData['totalOvers']
               : '$completedOvers.$ballsInOver';
@@ -623,22 +785,28 @@ class _BallByBallTracker extends StatelessWidget {
   final String matchId;
   final String inningsId;
   final LiveScoreRepository repo;
-  final int overNumber;   // ← ADD THIS
+  final int overNumber;
 
   const _BallByBallTracker({
     required this.tournamentId,
     required this.matchId,
     required this.inningsId,
     required this.repo,
-    required this.overNumber,   // ← ADD THIS
+    required this.overNumber,
   });
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<QuerySnapshot>(
       stream: repo.watchCurrentOverBalls(
-          tournamentId, matchId, inningsId, overNumber),   // ← CHANGED
+          tournamentId, matchId, inningsId, overNumber),
       builder: (context, snap) {
+        if (snap.hasError) {
+          // Surfaces index/permission errors instead of silently showing empty chips.
+          // If this fires, check Firestore console for a missing composite index
+          // on (overNumber ==, ballInOver asc) in the 'balls' subcollection.
+          debugPrint('watchCurrentOverBalls error: ${snap.error}');
+        }
         final balls = snap.hasData
             ? snap.data!.docs.map((d) => d.data() as Map<String, dynamic>).toList()
             : <Map<String, dynamic>>[];
