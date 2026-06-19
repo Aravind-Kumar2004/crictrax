@@ -108,10 +108,18 @@ class _TvQrSectionState extends State<TvQrSection> {
     super.dispose();
   }
 
-  @override
+@override
   Widget build(BuildContext context) {
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 350),
+      child: _buildContent(),
+    );
+  }
+
+  Widget _buildContent() {
     if (_linking) {
       return Column(
+        key: const ValueKey('linking'),
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           const CircularProgressIndicator(
@@ -133,6 +141,7 @@ class _TvQrSectionState extends State<TvQrSection> {
 
     if (_expired) {
       return Column(
+        key: const ValueKey('expired'),
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           const Icon(Icons.qr_code,
@@ -156,11 +165,13 @@ class _TvQrSectionState extends State<TvQrSection> {
 
     if (_qrData == null) {
       return const Center(
-          child:
-          CircularProgressIndicator(color: Color(0xFF00A3FF)));
+        key: ValueKey('loading'),
+        child: CircularProgressIndicator(color: Color(0xFF00A3FF)),
+      );
     }
 
     return Column(
+      key: const ValueKey('qr'),
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         const Text('Quick Login',
