@@ -2,6 +2,8 @@ class TournamentMatchEntity {
   final String id;
   final String teamId1Name;
   final String teamId2Name;
+  final String teamId1;
+  final String teamId2;
   final int overs;
   final bool isCompleted;
   final int batBowlFlag;
@@ -11,6 +13,8 @@ class TournamentMatchEntity {
     required this.id,
     required this.teamId1Name,
     required this.teamId2Name,
+    required this.teamId1,
+    required this.teamId2,
     required this.overs,
     required this.isCompleted,
     required this.batBowlFlag,

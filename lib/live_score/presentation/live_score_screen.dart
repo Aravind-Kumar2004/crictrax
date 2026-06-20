@@ -10,6 +10,8 @@ class LiveScoreScreen extends StatefulWidget {
   final String tournamentId;
   final String team1Name;
   final String team2Name;
+  final String team1Id;
+  final String team2Id;
 
   const LiveScoreScreen({
     Key? key,
@@ -17,6 +19,8 @@ class LiveScoreScreen extends StatefulWidget {
     required this.tournamentId,
     required this.team1Name,
     required this.team2Name,
+    required this.team1Id,
+    required this.team2Id,
   }) : super(key: key);
 
   @override
@@ -27,12 +31,43 @@ class _LiveScoreScreenState extends State<LiveScoreScreen> {
   final _repo = LiveScoreRepository();
   bool _hasNavigatedAway = false;
   Timer? _autoDismissTimer;
-  String? _lastInningsId;
+  Timer? _reconnectTimer;
+  int _reconnectAttempt = 0;
+  Stream<DocumentSnapshot>? _matchStream;
+  Stream<QuerySnapshot>? _inningsStream;
+String? _lastInningsId;
   Map<String, dynamic>? _lastInningsData;
+  String? _lastFirstInningsBattingTeamName;
+
+  @override
+  void initState() {
+    super.initState();
+    _initStreams();
+  }
+
+void _initStreams() {
+    _matchStream = _repo.watchMatch(widget.tournamentId, widget.matchId);
+    _inningsStream = _repo.watchInnings(widget.tournamentId, widget.matchId);
+    // Do NOT call setState here — StreamBuilder picks up new streams automatically
+    // setState causes immediate disposal of the old stream before Firebase Web
+    // finishes unsubscribing, triggering LateInitializationError in firestore_web
+  }
+
+void _scheduleReconnect() {
+    _reconnectTimer?.cancel();
+    final delay = Duration(seconds: (2 * (++_reconnectAttempt)).clamp(2, 10));
+    _reconnectTimer = Timer(delay, () {
+      if (!mounted) return;
+      // Assign new streams without setState to avoid firestore_web crash
+      _matchStream = _repo.watchMatch(widget.tournamentId, widget.matchId);
+      _inningsStream = _repo.watchInnings(widget.tournamentId, widget.matchId);
+    });
+  }
 
   @override
   void dispose() {
     _autoDismissTimer?.cancel();
+    _reconnectTimer?.cancel();
     super.dispose();
   }
 
@@ -82,11 +117,19 @@ class _LiveScoreScreenState extends State<LiveScoreScreen> {
                   ),
                 ),
 
-                // Listen to the MATCH document itself for completion status
                 StreamBuilder<DocumentSnapshot>(
-                  stream: _repo.watchMatch(widget.tournamentId, widget.matchId),
+                  stream: _matchStream,
                   builder: (context, matchSnap) {
+                    // ── Reconnect on match stream error
+                    if (matchSnap.hasError) {
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (mounted) _scheduleReconnect();
+                      });
+                    }
+
                     if (matchSnap.hasData && matchSnap.data!.exists) {
+                      // ── Reset reconnect counter on successful data
+                      _reconnectAttempt = 0;
                       final matchData = matchSnap.data!.data() as Map<String, dynamic>? ?? {};
                       final isCompleted = matchData['isCompleted'] == true;
 
@@ -101,28 +144,38 @@ class _LiveScoreScreenState extends State<LiveScoreScreen> {
                     }
 
                     return StreamBuilder<QuerySnapshot>(
-                      stream: _repo.watchInnings(widget.tournamentId, widget.matchId),
+                      stream: _inningsStream,
                       builder: (context, inningsSnap) {
+                        // ── Reconnect on innings stream error
                         if (inningsSnap.hasError) {
-                          return _buildErrorBar(inningsSnap.error.toString());
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (mounted) _scheduleReconnect();
+                          });
+                          // Show cached bar if available, else show error
+                          return _lastInningsId != null
+                              ? _buildCachedBar()
+                              : _buildErrorBar(inningsSnap.error.toString());
                         }
 
+                        // ── Show cached bar instead of spinner during reconnect
                         if (inningsSnap.connectionState == ConnectionState.waiting) {
-                          return _buildWaitingBar(label: 'Connecting...');
+                          return _lastInningsId != null
+                              ? _buildCachedBar()
+                              : _buildWaitingBar(label: 'Connecting...');
                         }
 
                         if (!inningsSnap.hasData || inningsSnap.data!.docs.isEmpty) {
-                          return _buildWaitingBar(label: 'Waiting for match to start...');
+                          return _lastInningsId != null
+                              ? _buildCachedBar()
+                              : _buildWaitingBar(label: 'Waiting for match to start...');
                         }
 
-                        final docs = inningsSnap.data!.docs;
+                        // ── Success: reset reconnect counter
+                        _reconnectAttempt = 0;
+                        _reconnectTimer?.cancel();
 
-                        // ── FIX: pick the CURRENT innings explicitly instead of trusting
-                        // Firestore's unordered doc list. Prefer the innings flagged
-                        // isSecondInnings == true (the most recently started one) if it
-                        // exists; otherwise fall back to the only/first innings present.
-                        // This replaces the old `docs.last` which depended on an
-                        // orderBy that was silently filtering everything out.
+                    final docs = inningsSnap.data!.docs;
+
                         final secondInningsDocs = docs.where((d) {
                           final data = d.data() as Map<String, dynamic>;
                           return data['isSecondInnings'] == true;
@@ -134,8 +187,25 @@ class _LiveScoreScreenState extends State<LiveScoreScreen> {
 
                         final innData = currentDoc.data() as Map<String, dynamic>;
 
+                        // ── Find the first innings' batting team so the second
+                        // innings can reliably resolve its own batting team even
+                        // before the backend writes battingTeamName on the new doc.
+                        final firstInningsDocs = docs.where((d) {
+                          final data = d.data() as Map<String, dynamic>;
+                          return data['isSecondInnings'] != true;
+                        }).toList();
+                        String? firstInningsBattingTeamName;
+                        if (firstInningsDocs.isNotEmpty) {
+                          final firstData =
+                              firstInningsDocs.first.data() as Map<String, dynamic>;
+                          firstInningsBattingTeamName =
+                              (firstData['battingTeamName'] ?? '').toString().trim();
+                        }
+
+                        // ── Deep copy so cache survives widget rebuilds
                         _lastInningsId = currentDoc.id;
-                        _lastInningsData = innData;
+                        _lastInningsData = Map<String, dynamic>.from(innData);
+                        _lastFirstInningsBattingTeamName = firstInningsBattingTeamName;
 
                         return _LiveScoreBar(
                           tournamentId: widget.tournamentId,
@@ -144,7 +214,10 @@ class _LiveScoreScreenState extends State<LiveScoreScreen> {
                           innData: innData,
                           team1Name: widget.team1Name,
                           team2Name: widget.team2Name,
+                          team1Id: widget.team1Id,
+                          team2Id: widget.team2Id,
                           repo: _repo,
+                          firstInningsBattingTeamName: firstInningsBattingTeamName,
                         );
                       },
                     );
@@ -155,6 +228,21 @@ class _LiveScoreScreenState extends State<LiveScoreScreen> {
           ),
         ],
       ),
+    );
+  }
+
+ Widget _buildCachedBar() {
+    return _LiveScoreBar(
+      tournamentId: widget.tournamentId,
+      matchId: widget.matchId,
+      inningsId: _lastInningsId!,
+      innData: _lastInningsData!,
+      team1Name: widget.team1Name,
+      team2Name: widget.team2Name,
+      team1Id: widget.team1Id,
+      team2Id: widget.team2Id,
+      repo: _repo,
+      firstInningsBattingTeamName: _lastFirstInningsBattingTeamName,
     );
   }
 
@@ -205,22 +293,6 @@ class _LiveScoreScreenState extends State<LiveScoreScreen> {
   }
 
   Widget _buildWaitingBar({String label = 'Waiting for match to start...'}) {
-    // ── FIX: if we have a cached innings from before this snapshot,
-    // show that instead of the generic waiting message. This covers
-    // the innings-2 creation window where watchInnings briefly emits
-    // an empty/incomplete snapshot.
-    if (_lastInningsId != null && _lastInningsData != null) {
-      return _LiveScoreBar(
-        tournamentId: widget.tournamentId,
-        matchId: widget.matchId,
-        inningsId: _lastInningsId!,
-        innData: _lastInningsData!,
-        team1Name: widget.team1Name,
-        team2Name: widget.team2Name,
-        repo: _repo,
-      );
-    }
-
     return Container(
       height: 110,
       color: const Color(0xFF0A0E1A),
@@ -245,8 +317,6 @@ class _LiveScoreScreenState extends State<LiveScoreScreen> {
   }
 
   Widget _buildErrorBar(String error) {
-    // ── FIX: surfaces real Firestore errors (missing index, permission
-    // denied, etc) instead of masking them as "waiting for match".
     return Container(
       height: 110,
       color: const Color(0xFF2A0E0E),
@@ -274,17 +344,19 @@ class _LiveScoreScreenState extends State<LiveScoreScreen> {
 
 
 // ═══════════════════════════════════════════════════════════════
-// MAIN SCORE BAR — aggregates batsmen+bowlers to compute live totals
+// MAIN SCORE BAR — StatefulWidget with internal cache
 // ═══════════════════════════════════════════════════════════════
-class _LiveScoreBar extends StatelessWidget {
+class _LiveScoreBar extends StatefulWidget {
   final String tournamentId;
   final String matchId;
   final String inningsId;
   final Map<String, dynamic> innData;
   final String team1Name;
   final String team2Name;
+  final String team1Id;
+  final String team2Id;
   final LiveScoreRepository repo;
-
+  final String? firstInningsBattingTeamName;
 
   const _LiveScoreBar({
     required this.tournamentId,
@@ -293,23 +365,78 @@ class _LiveScoreBar extends StatelessWidget {
     required this.innData,
     required this.team1Name,
     required this.team2Name,
+    required this.team1Id,
+    required this.team2Id,
     required this.repo,
+    this.firstInningsBattingTeamName,
   });
 
-  String _resolveBattingTeamName() {
-    final name = (innData['battingTeamName'] ?? '').toString().trim();
-    if (name.isNotEmpty) return name;
-    final id = (innData['battingTeamId'] ?? '').toString().trim();
-    if (id == team1Name) return team1Name;
-    if (id == team2Name) return team2Name;
-    return team1Name;
+  @override
+  State<_LiveScoreBar> createState() => _LiveScoreBarState();
+}
+
+class _LiveScoreBarState extends State<_LiveScoreBar> {
+  // ── Persist last-known batsmen and bowler so score never blanks
+  List<Map<String, dynamic>> _cachedBatsmen = [];
+  Map<String, dynamic>? _cachedBowler;
+
+  // FIX: cache the streams per inningsId so they aren't recreated on every
+  // rebuild (every ball). A brand-new Stream instance passed into
+  // StreamBuilder on each build cancels the previous subscription before
+  // it ever delivers data — this is why the bowler name and ball-by-ball
+  // tracker appeared frozen.
+  late String _trackedInningsId = widget.inningsId;
+  late Stream<QuerySnapshot> _batsmenStream = widget.repo
+      .watchBatsmen(widget.tournamentId, widget.matchId, widget.inningsId);
+  late Stream<QuerySnapshot> _bowlersStream = widget.repo
+      .watchBowlers(widget.tournamentId, widget.matchId, widget.inningsId);
+
+  @override
+  void didUpdateWidget(covariant _LiveScoreBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Only resubscribe when the innings actually changes (e.g. first
+    // innings → second innings) — not on every ball-level rebuild.
+    if (widget.inningsId != _trackedInningsId) {
+      _trackedInningsId = widget.inningsId;
+      _cachedBatsmen = [];
+      _cachedBowler = null;
+      _batsmenStream = widget.repo
+          .watchBatsmen(widget.tournamentId, widget.matchId, widget.inningsId);
+      _bowlersStream = widget.repo
+          .watchBowlers(widget.tournamentId, widget.matchId, widget.inningsId);
+    }
   }
 
-  String _resolveOpponentName(String battingTeamName) {
-    if (battingTeamName == team1Name) return team2Name;
-    if (battingTeamName == team2Name) return team1Name;
-    return team2Name;
+String _resolveBattingTeamName() {
+    // PRIMARY: battingTeamId is the reliable field — written directly by
+    // the Innings model. battingTeamName comes from a separate write path
+    // that was observed to carry the wrong team during the second innings.
+    final battingTeamId = (widget.innData['battingTeamId'] ?? '').toString().trim();
+    debugPrint('battingTeamId=$battingTeamId  team1Id=${widget.team1Id}  team2Id=${widget.team2Id}');
+    if (battingTeamId.isNotEmpty) {
+      if (battingTeamId == widget.team1Id) return widget.team1Name;
+      if (battingTeamId == widget.team2Id) return widget.team2Name;
+    }
+
+    final name = (widget.innData['battingTeamName'] ?? '').toString().trim();
+    if (name.isNotEmpty) return name;
+
+    final isSecondInnings = widget.innData['isSecondInnings'] == true;
+    if (isSecondInnings &&
+        (widget.firstInningsBattingTeamName?.isNotEmpty ?? false)) {
+      return widget.firstInningsBattingTeamName == widget.team1Name
+          ? widget.team2Name
+          : widget.team1Name;
+    }
+    return widget.team1Name;
   }
+  String _resolveOpponentName(String battingTeamName) {
+    if (battingTeamName == widget.team1Name) return widget.team2Name;
+    if (battingTeamName == widget.team2Name) return widget.team1Name;
+    return widget.team2Name;
+  }
+
+  Widget _vDivider() => Container(width: 1.5, color: Colors.white.withOpacity(0.1));
 
   @override
   Widget build(BuildContext context) {
@@ -318,8 +445,8 @@ class _LiveScoreBar extends StatelessWidget {
 
     return Container(
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [const Color(0xFF071226), const Color(0xFF0C1F3D)],
+        gradient: const LinearGradient(
+          colors: [Color(0xFF071226), Color(0xFF0C1F3D)],
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
         ),
@@ -329,14 +456,18 @@ class _LiveScoreBar extends StatelessWidget {
         ],
       ),
       height: 110,
-      child: StreamBuilder<QuerySnapshot>(
-        stream: repo.watchBatsmen(tournamentId, matchId, inningsId),
+child: StreamBuilder<QuerySnapshot>(
+        stream: _batsmenStream,
         builder: (context, batSnap) {
-          final allBatsmen = batSnap.hasData
-              ? batSnap.data!.docs.map((d) => d.data() as Map<String, dynamic>).toList()
-              : <Map<String, dynamic>>[];
+          // ── Update cache only when real data arrives
+       if (batSnap.hasData && batSnap.data!.docs.isNotEmpty) {
+            _cachedBatsmen = batSnap.data!.docs
+                .map((d) => d.data() as Map<String, dynamic>)
+                .toList();
+          }
+          // ── Always use cache so score never resets to 0 on reconnect
+          final allBatsmen = _cachedBatsmen;
 
-          // Aggregate live totals from batsmen subcollection
           int totalRuns = 0;
           int totalWickets = 0;
           int totalBalls = 0;
@@ -346,44 +477,59 @@ class _LiveScoreBar extends StatelessWidget {
             if (b['isOut'] == true) totalWickets++;
           }
 
-          // Fallback to innings-level fields if subcollection sum is zero but fields exist
-          if (totalRuns == 0 && innData['totalRuns'] != null) {
-            totalRuns = (innData['totalRuns'] as num).toInt();
+          // Fallback to innings-level fields if subcollection sum is zero
+          if (totalRuns == 0 && widget.innData['totalRuns'] != null) {
+            totalRuns = (widget.innData['totalRuns'] as num).toInt();
           }
-          if (totalWickets == 0 && innData['totalWickets'] != null) {
-            totalWickets = (innData['totalWickets'] as num).toInt();
+          if (totalWickets == 0 && widget.innData['totalWickets'] != null) {
+            totalWickets = (widget.innData['totalWickets'] as num).toInt();
           }
 
           final completedOvers = totalBalls ~/ 6;
           final ballsInOver = totalBalls % 6;
-          // If totalBalls is an exact multiple of 6 (an over just finished),
-          // keep showing the over that JUST completed until the first ball
-          // of the next over is actually recorded in the 'balls' subcollection.
-          // Without this, the tracker briefly queries an over with zero docs
-          // and renders as empty even though runs are already on the board.
           final currentOverNumber = (ballsInOver == 0 && totalBalls > 0)
               ? completedOvers - 1
               : completedOvers;
-          final oversDisplay = innData['totalOvers'] != null && totalBalls == 0
-              ? innData['totalOvers']
+          final oversDisplay = widget.innData['totalOvers'] != null && totalBalls == 0
+              ? widget.innData['totalOvers']
               : '$completedOvers.$ballsInOver';
 
-          final activeBatsmen =
-          allBatsmen.where((b) => b['isOut'] != true).toList();
+          final activeBatsmen = allBatsmen.where((b) => b['isOut'] != true).toList();
 
-          return StreamBuilder<QuerySnapshot>(
-            stream: repo.watchBowlers(tournamentId, matchId, inningsId),
+         return StreamBuilder<QuerySnapshot>(
+            stream: _bowlersStream,
             builder: (context, bowlSnap) {
-              Map<String, dynamic>? bowler;
-              if (bowlSnap.hasData && bowlSnap.data!.docs.isNotEmpty) {
-                final bowlers = bowlSnap.data!.docs.map((d) => d.data() as Map<String, dynamic>).toList();
-                final bowling = bowlers.where((b) => b['isBowling'] == true).toList();
-                bowler = bowling.isNotEmpty ? bowling.first : bowlers.last;
+              // ── Update cache only when real data arrives
+         if (bowlSnap.hasData && bowlSnap.data!.docs.isNotEmpty) {
+                final bowlers = bowlSnap.data!.docs
+                    .map((d) => d.data() as Map<String, dynamic>)
+                    .toList();
+
+                // FIX: `isBowling` alone is unreliable once a bowler returns
+                // for a later over — the previous spell's flag can still be
+                // true, and picking `.first` then grabs the wrong doc. Prefer
+                // whichever bowler doc was updated most recently instead;
+                // that's always the bowler currently delivering balls.
+                final withTimestamp =
+                    bowlers.where((b) => b['lastUpdated'] is Timestamp).toList();
+
+                if (withTimestamp.isNotEmpty) {
+                  withTimestamp.sort((a, b) => (b['lastUpdated'] as Timestamp)
+                      .compareTo(a['lastUpdated'] as Timestamp));
+                  _cachedBowler = withTimestamp.first;
+                } else {
+                  // Fallback if no timestamp field exists on these docs.
+                  final bowling =
+                      bowlers.where((b) => b['isBowling'] == true).toList();
+                  _cachedBowler = bowling.isNotEmpty ? bowling.first : bowlers.last;
+                }
               }
+              // ── Always use cache so bowler never blanks on reconnect
+              final bowler = _cachedBowler;
 
               final crr = totalBalls > 0
                   ? (totalRuns / totalBalls) * 6
-                  : (innData['currentRunRate'] ?? 0.0);
+                  : (widget.innData['currentRunRate'] ?? 0.0);
 
               return Row(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -406,10 +552,10 @@ class _LiveScoreBar extends StatelessWidget {
                       crr: crr,
                       bowler: bowler,
                       opponentName: opponentName,
-                      tournamentId: tournamentId,
-                      matchId: matchId,
-                      inningsId: inningsId,
-                      repo: repo,
+                      tournamentId: widget.tournamentId,
+                      matchId: widget.matchId,
+                      inningsId: widget.inningsId,
+                      repo: widget.repo,
                       currentOverNumber: currentOverNumber,
                     ),
                   ),
@@ -421,9 +567,8 @@ class _LiveScoreBar extends StatelessWidget {
       ),
     );
   }
-
-  Widget _vDivider() => Container(width: 1.5, color: Colors.white.withOpacity(0.1));
 }
+
 
 // ═══════════════════════════════════════════════════════════════
 // COL 1 — Batting team score
@@ -535,6 +680,7 @@ class _Col1BattingTeam extends StatelessWidget {
   }
 }
 
+
 // ═══════════════════════════════════════════════════════════════
 // COL 2 — Batsmen
 // ═══════════════════════════════════════════════════════════════
@@ -632,8 +778,9 @@ class _Col2Batsmen extends StatelessWidget {
   }
 }
 
+
 // ═══════════════════════════════════════════════════════════════
-// COL 3 — Run rate + bowler + ball-by-ball tracker (6 balls + extras)
+// COL 3 — Run rate + bowler + ball-by-ball tracker
 // ═══════════════════════════════════════════════════════════════
 class _Col3BallTracker extends StatelessWidget {
   final dynamic crr;
@@ -674,7 +821,6 @@ class _Col3BallTracker extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Run rate block
         Container(
           width: 78,
           decoration: const BoxDecoration(
@@ -711,8 +857,6 @@ class _Col3BallTracker extends StatelessWidget {
             ],
           ),
         ),
-
-        // Bowler info
         Expanded(
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
@@ -767,8 +911,6 @@ class _Col3BallTracker extends StatelessWidget {
             ),
           ),
         ),
-
-        // Ball-by-ball tracker
         Expanded(
           flex: 2,
           child: _BallByBallTracker(
@@ -784,11 +926,11 @@ class _Col3BallTracker extends StatelessWidget {
   }
 }
 
+
 // ═══════════════════════════════════════════════════════════════
-// Ball-by-ball tracker — 6 balls + extra slots for wide/noball/etc
-// Reads the most recent over's deliveries from a 'balls' subcollection
+// Ball-by-ball tracker
 // ═══════════════════════════════════════════════════════════════
-class _BallByBallTracker extends StatelessWidget {
+class _BallByBallTracker extends StatefulWidget {
   final String tournamentId;
   final String matchId;
   final String inningsId;
@@ -804,15 +946,32 @@ class _BallByBallTracker extends StatelessWidget {
   });
 
   @override
+  State<_BallByBallTracker> createState() => _BallByBallTrackerState();
+}
+
+class _BallByBallTrackerState extends State<_BallByBallTracker> {
+  late int _trackedOver = widget.overNumber;
+  late Stream<QuerySnapshot> _ballsStream = widget.repo.watchCurrentOverBalls(
+      widget.tournamentId, widget.matchId, widget.inningsId, widget.overNumber);
+
+  @override
+  void didUpdateWidget(covariant _BallByBallTracker oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Only recreate the stream when the over actually changes — not on
+    // every ball-level rebuild within the same over.
+    if (widget.overNumber != _trackedOver) {
+      _trackedOver = widget.overNumber;
+      _ballsStream = widget.repo.watchCurrentOverBalls(
+          widget.tournamentId, widget.matchId, widget.inningsId, widget.overNumber);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return StreamBuilder<QuerySnapshot>(
-      stream: repo.watchCurrentOverBalls(
-          tournamentId, matchId, inningsId, overNumber),
+      stream: _ballsStream,
       builder: (context, snap) {
         if (snap.hasError) {
-          // Surfaces index/permission errors instead of silently showing empty chips.
-          // If this fires, check Firestore console for a missing composite index
-          // on (overNumber ==, ballInOver asc) in the 'balls' subcollection.
           debugPrint('watchCurrentOverBalls error: ${snap.error}');
         }
         final balls = snap.hasData
@@ -847,7 +1006,7 @@ class _BallByBallTracker extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'OVER ${overNumber + 1}',
+                'OVER ${widget.overNumber + 1}',
                 style: const TextStyle(
                   color: Colors.white38,
                   fontSize: 9,
@@ -926,13 +1085,14 @@ class _BallChip extends StatelessWidget {
         child: empty
             ? null
             : Text(
-          label,
-          style: TextStyle(color: col, fontSize: 10, fontWeight: FontWeight.w900),
-        ),
+                label,
+                style: TextStyle(color: col, fontSize: 10, fontWeight: FontWeight.w900),
+              ),
       ),
     );
   }
 }
+
 
 // ═══════════════════════════════════════════════════════════════
 // Shared — Team Badge
