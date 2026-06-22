@@ -5,14 +5,19 @@ import '../../data/models/match_model.dart';
 class FixturesBracketWidget extends StatelessWidget {
   final List<TournamentMatchModel> matches;
   final String tournamentName;
+  final String tournamentFormat; // 'league', 'single_elimination', etc.
   final void Function(TournamentMatchModel) onMatchTap;
 
   const FixturesBracketWidget({
     Key? key,
     required this.matches,
     required this.tournamentName,
+    required this.tournamentFormat,
     required this.onMatchTap,
   }) : super(key: key);
+
+  bool get _isLeagueFormat =>
+      tournamentFormat.toLowerCase().contains('league');
 
   @override
   Widget build(BuildContext context) {
@@ -22,6 +27,68 @@ class FixturesBracketWidget extends StatelessWidget {
       );
     }
 
+    return _isLeagueFormat ? _buildLeagueView() : _buildBracketView();
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // LEAGUE FORMAT — flat grid of all fixtures, grouped by status,
+  // no fake "round" labels since league play has no bracket shape.
+  // ═══════════════════════════════════════════════════════════
+  Widget _buildLeagueView() {
+    final sorted = [...matches]..sort((a, b) {
+      final da = a.matchDate ?? '';
+      final db = b.matchDate ?? '';
+      return da.compareTo(db);
+    });
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(32),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.format_list_bulleted, color: Color(0xFF8E5CFF), size: 26),
+              const SizedBox(width: 10),
+              const Text(
+                'League Fixtures',
+                style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(width: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.06),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text('${sorted.length} matches',
+                    style: const TextStyle(color: Colors.white54, fontSize: 12)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 4,
+              crossAxisSpacing: 18,
+              mainAxisSpacing: 18,
+              childAspectRatio: 1.15,
+            ),
+            itemCount: sorted.length,
+            itemBuilder: (context, i) =>
+                _FixtureCard(match: sorted[i], onTap: () => onMatchTap(sorted[i])),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // KNOCKOUT / BRACKET FORMAT — only used for single_elimination etc
+  // ═══════════════════════════════════════════════════════════
+  Widget _buildBracketView() {
     final rounds = _groupIntoRounds(matches);
 
     if (rounds.isEmpty) {
@@ -30,9 +97,8 @@ class FixturesBracketWidget extends StatelessWidget {
       );
     }
 
-    final cardHeight = 150.0; // height per fixture card including margin
-    final maxMatchesInAnyRound =
-    rounds.map((r) => r.length).fold(1, (a, b) => a > b ? a : b);
+    const cardHeight = 150.0;
+    final maxMatchesInAnyRound = rounds.map((r) => r.length).fold(1, (a, b) => a > b ? a : b);
     final columnHeight = (maxMatchesInAnyRound * cardHeight).clamp(300.0, 1400.0);
 
     return SingleChildScrollView(
@@ -51,7 +117,6 @@ class FixturesBracketWidget extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 28),
-
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: SizedBox(
@@ -85,8 +150,6 @@ class FixturesBracketWidget extends StatelessWidget {
     if (sorted.isEmpty) return [];
     if (sorted.length == 1) return [sorted];
 
-    // Always use the chunked "matchday" fallback for non-bracket-sized
-    // tournaments (covers league format and any odd match count).
     final isBracketSized = _looksLikeBracket(sorted.length);
 
     if (!isBracketSized) {
@@ -124,7 +187,7 @@ class FixturesBracketWidget extends StatelessWidget {
     if (remaining == 1) return 'Final';
     if (remaining == 2) return 'Semi Finals';
     if (remaining == 3) return 'Quarter Finals';
-    return 'Matchday ${index + 1}';
+    return 'Round ${index + 1}';
   }
 }
 
@@ -188,8 +251,12 @@ class _FixtureCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isLive = match.isLive;
+    // ── FIX: trust isCompleted FIRST, before checking isLive at all.
+    // A match that's completed must never show LIVE, regardless of
+    // any other flag combination on the underlying data.
     final isCompleted = match.isCompleted;
+    final isLive = !isCompleted && match.isLive;
+
     final statusColor = isLive
         ? Colors.redAccent
         : isCompleted
@@ -245,6 +312,17 @@ class _FixtureCard extends StatelessWidget {
                                 child: const Text('LIVE',
                                     style: TextStyle(
                                         color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
+                              )
+                            else if (isCompleted)
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withOpacity(0.15),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: const Text('DONE',
+                                    style: TextStyle(
+                                        color: Colors.white70, fontSize: 9, fontWeight: FontWeight.bold)),
                               ),
                           ],
                         ),

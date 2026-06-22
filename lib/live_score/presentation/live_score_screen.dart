@@ -809,15 +809,33 @@ class _BallByBallTracker extends StatelessWidget {
       stream: repo.watchCurrentOverBalls(
           tournamentId, matchId, inningsId, overNumber),
       builder: (context, snap) {
+        // ── FIX: show the actual error ON SCREEN instead of debugPrint,
+        // since a browser/TV build has no visible console. This will tell
+        // us definitively whether it's a missing-index error (Firestore
+        // returns a console link to auto-create it) or genuinely zero
+        // documents because the mobile app never writes to 'balls'.
         if (snap.hasError) {
-          // Surfaces index/permission errors instead of silently showing empty chips.
-          // If this fires, check Firestore console for a missing composite index
-          // on (overNumber ==, ballInOver asc) in the 'balls' subcollection.
-          debugPrint('watchCurrentOverBalls error: ${snap.error}');
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+            child: Text(
+              'Ball data error:\n${snap.error}',
+              style: const TextStyle(color: Colors.redAccent, fontSize: 9),
+              maxLines: 4,
+              overflow: TextOverflow.ellipsis,
+            ),
+          );
         }
+
         final balls = snap.hasData
             ? snap.data!.docs.map((d) => d.data() as Map<String, dynamic>).toList()
             : <Map<String, dynamic>>[];
+
+        // ── DEBUG: temporarily show doc count so we can confirm whether
+        // Firestore has ANY ball documents at all for this innings, vs
+        // having documents that just don't match this exact overNumber.
+        final debugLabel = balls.isEmpty
+            ? 'OVER ${overNumber + 1} (0 balls found)'
+            : 'OVER ${overNumber + 1}';
 
         final legalBalls = <Map<String, dynamic>>[];
         final extraBalls = <Map<String, dynamic>>[];

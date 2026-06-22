@@ -246,6 +246,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
         return FixturesBracketWidget(
           matches: _all,
           tournamentName: widget.tournament.name,
+          tournamentFormat: widget.tournament.format,
           onMatchTap: _openMatch,
         );
       case MatchTab.live:

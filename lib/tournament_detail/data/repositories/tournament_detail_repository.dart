@@ -40,9 +40,8 @@ class TournamentDetailRepository {
     }).toList();
   }
 
-  // NEW: real-time stream version, used instead of getMatches() in the screen
+
   Stream<List<TournamentMatchModel>> watchMatches(String tournamentId) async* {
-    // Fetch team names once (they rarely change mid-tournament)
     final teamsSnap = await _db
         .collection('tournaments')
         .doc(tournamentId)
@@ -60,8 +59,10 @@ class TournamentDetailRepository {
         .doc(tournamentId)
         .collection('matches')
         .snapshots()
-        .map((snap) {
-      return snap.docs.map((d) {
+        .asyncMap((snap) async {
+      final results = <TournamentMatchModel>[];
+
+      for (final d in snap.docs) {
         final data = d.data();
         final teamId1 = data['teamId1'] ?? '';
         final teamId2 = data['teamId2'] ?? '';
@@ -74,8 +75,44 @@ class TournamentDetailRepository {
             ? data['teamId2Name'] as String
             : (teamNameById[teamId2]?.isNotEmpty == true ? teamNameById[teamId2]! : 'Unknown Team');
 
-        return TournamentMatchModel.fromMapWithNames(data, d.id, team1Name, team2Name);
-      }).toList();
+        var isCompleted = data['isCompleted'] == true;
+
+        // ── FIX: fallback check — if match.isCompleted was never set by
+        // the mobile app, check whether the SECOND INNINGS document under
+        // this match reports isCompleted == true. If so, treat the whole
+        // match as completed for display purposes, even though the match
+        // doc itself is stale. This keeps Live/Completed tabs accurate
+        // without requiring an immediate mobile-app fix.
+        if (!isCompleted) {
+          final inningsSnap = await _db
+              .collection('tournaments')
+              .doc(tournamentId)
+              .collection('matches')
+              .doc(d.id)
+              .collection('innings')
+              .get();
+
+          final secondInnings = inningsSnap.docs.where((inn) {
+            final innData = inn.data();
+            return innData['isSecondInnings'] == true;
+          }).toList();
+
+          if (secondInnings.isNotEmpty) {
+            final secondInnData = secondInnings.first.data();
+            if (secondInnData['isCompleted'] == true) {
+              isCompleted = true;
+            }
+          }
+        }
+
+        final patchedData = {...data, 'isCompleted': isCompleted};
+
+        results.add(TournamentMatchModel.fromMapWithNames(
+          patchedData, d.id, team1Name, team2Name,
+        ));
+      }
+
+      return results;
     });
   }
 }
