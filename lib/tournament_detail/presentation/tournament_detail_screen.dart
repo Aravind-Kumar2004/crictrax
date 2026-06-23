@@ -51,6 +51,8 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
       final completed = <TournamentMatchModel>[];
 
       for (final m in matches) {
+        // isCompleted always wins — mobile app may leave isLive=true
+        // briefly while writing isCompleted=true
         if (m.isCompleted) {
           completed.add(m);
         } else if (m.isLive) {

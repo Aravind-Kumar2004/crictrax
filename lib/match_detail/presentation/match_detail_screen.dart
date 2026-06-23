@@ -33,7 +33,6 @@ class MatchDetailScreen extends StatelessWidget {
       backgroundColor: const Color(0xFF050A18),
       body: Row(
         children: [
-          // Back button side panel
           Container(
             width: 80,
             color: Colors.white.withOpacity(0.02),
@@ -42,13 +41,11 @@ class MatchDetailScreen extends StatelessWidget {
               children: [
                 Focus(
                   child: Builder(builder: (context) {
-                    final isFocused =
-                        Focus.of(context).hasFocus;
+                    final isFocused = Focus.of(context).hasFocus;
                     return GestureDetector(
                       onTap: () => Navigator.pop(context),
                       child: AnimatedContainer(
-                        duration:
-                        const Duration(milliseconds: 200),
+                        duration: const Duration(milliseconds: 200),
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
                           color: isFocused
@@ -65,22 +62,16 @@ class MatchDetailScreen extends StatelessWidget {
               ],
             ),
           ),
-
-          // Content
           Expanded(
             child: Padding(
               padding: const EdgeInsets.all(32),
               child: Column(
                 children: [
-                  // Header
                   _buildHeader(context),
                   const SizedBox(height: 32),
-
-                  // Innings
                   Expanded(
                     child: StreamBuilder<QuerySnapshot>(
-                      stream: repo.watchInnings(
-                          tournamentId, matchId),
+                      stream: repo.watchInnings(tournamentId, matchId),
                       builder: (context, snap) {
                         if (!snap.hasData) {
                           return const Center(
@@ -92,29 +83,23 @@ class MatchDetailScreen extends StatelessWidget {
                         if (innings.isEmpty) {
                           return Center(
                             child: Column(
-                              mainAxisAlignment:
-                              MainAxisAlignment.center,
+                              mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                const Icon(
-                                    Icons.sports_cricket,
-                                    color: Colors.white24,
-                                    size: 60),
+                                const Icon(Icons.sports_cricket,
+                                    color: Colors.white24, size: 60),
                                 const SizedBox(height: 16),
-                                Text(
-                                    '$team1Name  vs  $team2Name',
+                                Text('$team1Name  vs  $team2Name',
                                     style: const TextStyle(
                                         color: Colors.white,
                                         fontSize: 24,
-                                        fontWeight:
-                                        FontWeight.bold)),
+                                        fontWeight: FontWeight.bold)),
                                 const SizedBox(height: 8),
                                 Text(
                                   isLive
                                       ? 'Match in progress'
                                       : 'Match not started yet',
                                   style: const TextStyle(
-                                      color: Colors.white38,
-                                      fontSize: 16),
+                                      color: Colors.white38, fontSize: 16),
                                 ),
                               ],
                             ),
@@ -122,19 +107,23 @@ class MatchDetailScreen extends StatelessWidget {
                         }
 
                         return Row(
-                          crossAxisAlignment:
-                          CrossAxisAlignment.start,
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: innings.map((inn) {
                             return Expanded(
                               child: Padding(
-                                padding: const EdgeInsets.only(
-                                    right: 16),
+                                padding:
+                                const EdgeInsets.only(right: 16),
                                 child: InningsCardWidget(
                                   innData: inn.data()
                                   as Map<String, dynamic>,
-                                  inningsNumber: innings
-                                      .indexOf(inn) +
-                                      1,
+                                  inningsNumber:
+                                  innings.indexOf(inn) + 1,
+                                  tournamentId: tournamentId,
+                                  matchId: matchId,
+                                  inningsId: inn.id,
+                                  team1Name: team1Name,
+                                  team2Name: team2Name,
+                                  repo: repo,
                                 ),
                               ),
                             );
@@ -186,12 +175,10 @@ class MatchDetailScreen extends StatelessWidget {
                             horizontal: 12, vertical: 6),
                         decoration: BoxDecoration(
                           color: Colors.redAccent,
-                          borderRadius:
-                          BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(8),
                         ),
                         child: const Row(children: [
-                          Icon(Icons.circle,
-                              color: Colors.white, size: 8),
+                          Icon(Icons.circle, color: Colors.white, size: 8),
                           SizedBox(width: 4),
                           Text('LIVE',
                               style: TextStyle(
@@ -207,15 +194,11 @@ class MatchDetailScreen extends StatelessWidget {
                         decoration: BoxDecoration(
                           color: isCompleted
                               ? Colors.white.withOpacity(0.1)
-                              : const Color(0xFF00A3FF)
-                              .withOpacity(0.15),
-                          borderRadius:
-                          BorderRadius.circular(8),
+                              : const Color(0xFF00A3FF).withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(8),
                         ),
                         child: Text(
-                            isCompleted
-                                ? 'COMPLETED'
-                                : 'UPCOMING',
+                            isCompleted ? 'COMPLETED' : 'UPCOMING',
                             style: TextStyle(
                                 color: isCompleted
                                     ? Colors.white54
@@ -232,8 +215,7 @@ class MatchDetailScreen extends StatelessWidget {
                     const SizedBox(height: 4),
                     Text('$overs overs',
                         style: const TextStyle(
-                            color: Colors.white38,
-                            fontSize: 13)),
+                            color: Colors.white38, fontSize: 13)),
                   ]),
                   Expanded(
                     child: Text(team2Name,
@@ -249,8 +231,7 @@ class MatchDetailScreen extends StatelessWidget {
                 const SizedBox(height: 20),
                 Focus(
                   child: Builder(builder: (context) {
-                    final isFocused =
-                        Focus.of(context).hasFocus;
+                    final isFocused = Focus.of(context).hasFocus;
                     return GestureDetector(
                       onTap: () => Navigator.push(
                         context,
@@ -264,25 +245,19 @@ class MatchDetailScreen extends StatelessWidget {
                         ),
                       ),
                       child: AnimatedContainer(
-                        duration:
-                        const Duration(milliseconds: 200),
+                        duration: const Duration(milliseconds: 200),
                         padding: const EdgeInsets.symmetric(
                             vertical: 14, horizontal: 32),
                         decoration: BoxDecoration(
                           gradient: LinearGradient(
                             colors: isFocused
-                                ? [
-                              Colors.redAccent,
-                              Colors.red
-                            ]
+                                ? [Colors.redAccent, Colors.red]
                                 : [
-                              Colors.redAccent
-                                  .withOpacity(0.7),
+                              Colors.redAccent.withOpacity(0.7),
                               Colors.red.withOpacity(0.7)
                             ],
                           ),
-                          borderRadius:
-                          BorderRadius.circular(12),
+                          borderRadius: BorderRadius.circular(12),
                         ),
                         child: const Row(
                           mainAxisSize: MainAxisSize.min,
