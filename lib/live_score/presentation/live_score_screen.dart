@@ -134,10 +134,7 @@ class _LiveScoreScreenState extends State<LiveScoreScreen> {
                       matchSnap.data!.data() as Map<String, dynamic>? ?? {};
                   matchOvers = (matchData['overs'] as num?)?.toInt() ?? 0;
 
-                  // ── Direct match-doc completion trigger
-                  // This fires even if innings docs don't update,
-                  // covering the case where the mobile app marks the
-                  // match complete in a single write to the match doc.
+
                   if (matchData['isCompleted'] == true &&
                       !_hasNavigatedAway &&
                       !_dialogShown) {
