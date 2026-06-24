@@ -288,7 +288,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
     );
   }
 
-  void _openMatch(TournamentMatchModel m) {
+ void _openMatch(TournamentMatchModel m) {
     if (m.isLive) {
       Navigator.push(
         context,
@@ -298,6 +298,8 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
             tournamentId: widget.tournamentId,
             team1Name: m.teamId1Name,
             team2Name: m.teamId2Name,
+            team1Id: m.teamId1,
+            team2Id: m.teamId2,
           ),
         ),
       );
@@ -310,6 +312,8 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
             tournamentId: widget.tournamentId,
             team1Name: m.teamId1Name,
             team2Name: m.teamId2Name,
+            team1Id: m.teamId1,
+            team2Id: m.teamId2,
             overs: m.overs,
             isLive: m.isLive,
             isCompleted: m.isCompleted,
@@ -318,7 +322,6 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
       );
     }
   }
-
   Widget _header(String title, Color color) =>
       Text(title, style: TextStyle(color: color, fontSize: 22, fontWeight: FontWeight.bold));
 

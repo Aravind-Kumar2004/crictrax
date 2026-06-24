@@ -10,6 +10,8 @@ class MatchDetailScreen extends StatelessWidget {
   final String tournamentId;
   final String team1Name;
   final String team2Name;
+  final String team1Id;
+  final String team2Id;
   final int overs;
   final bool isLive;
   final bool isCompleted;
@@ -20,6 +22,8 @@ class MatchDetailScreen extends StatelessWidget {
     required this.tournamentId,
     required this.team1Name,
     required this.team2Name,
+    required this.team1Id,
+    required this.team2Id,
     required this.overs,
     required this.isLive,
     required this.isCompleted,
@@ -236,11 +240,13 @@ class MatchDetailScreen extends StatelessWidget {
                       onTap: () => Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => LiveScoreScreen(
+                       builder: (_) => LiveScoreScreen(
                             matchId: matchId,
                             tournamentId: tournamentId,
                             team1Name: team1Name,
                             team2Name: team2Name,
+                            team1Id: team1Id,
+                            team2Id: team2Id,
                           ),
                         ),
                       ),
