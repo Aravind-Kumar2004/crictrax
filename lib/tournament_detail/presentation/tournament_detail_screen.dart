@@ -43,23 +43,42 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
 
   void _watchMatches() {
     _matchesSub?.cancel();
-    _matchesSub = _repo.watchMatches(widget.tournamentId).listen((matches) {
+    _matchesSub = _repo.watchMatches(widget.tournamentId).listen((rawMatches) {
       if (!mounted) return;
+
+
+      final uniqueMatches = <String, TournamentMatchModel>{};
+
+      for (final m in rawMatches) {
+        if (uniqueMatches.containsKey(m.id)) {
+          // If we find a duplicate, always prefer the one that says it is completed
+          if (m.isCompleted) {
+            uniqueMatches[m.id] = m;
+          }
+        } else {
+          uniqueMatches[m.id] = m;
+        }
+      }
+
+      // Use our clean, deduplicated list from here on
+      final matches = uniqueMatches.values.toList();
 
       final live = <TournamentMatchModel>[];
       final upcoming = <TournamentMatchModel>[];
       final completed = <TournamentMatchModel>[];
 
       for (final m in matches) {
-        // isCompleted always wins — mobile app may leave isLive=true
-        // briefly while writing isCompleted=true
+        // isCompleted always wins
         if (m.isCompleted) {
           completed.add(m);
-        } else if (m.isLive) {
+        }
+        else if (m.isLive) {
           live.add(m);
-        } else {
+        }
+        else {
           upcoming.add(m);
         }
+
       }
 
       setState(() {
