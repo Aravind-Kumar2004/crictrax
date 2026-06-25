@@ -14,11 +14,13 @@ enum MatchTab { live, upcoming, completed, fixtures }
 class TournamentDetailScreen extends StatefulWidget {
   final String tournamentId;
   final TournamentEntity tournament;
+  final String? sessionId; // ← ADD
 
   const TournamentDetailScreen({
     Key? key,
     required this.tournamentId,
     required this.tournament,
+    this.sessionId, // ← ADD
   }) : super(key: key);
 
   @override
@@ -307,7 +309,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
     );
   }
 
- void _openMatch(TournamentMatchModel m) {
+void _openMatch(TournamentMatchModel m) {
     if (m.isLive) {
       Navigator.push(
         context,
@@ -319,6 +321,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen> {
             team2Name: m.teamId2Name,
             team1Id: m.teamId1,
             team2Id: m.teamId2,
+            sessionId: widget.sessionId, // ← ADD
           ),
         ),
       );
