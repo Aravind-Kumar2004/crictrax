@@ -2,10 +2,28 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../../data/models/match_model.dart';
 
+// ─── Design Tokens ────────────────────────────────────────────────────────────
+class _C {
+  static const bg       = Color(0xFF050A18);
+  static const surface  = Color(0xFF0A1628);
+  static const surfaceH = Color(0xFF0F1E35);
+  static const accent   = Color(0xFF00D4FF);
+  static const accentDim= Color(0xFF0066CC);
+  static const live     = Color(0xFFFF3D3D);
+  static const upcoming = Color(0xFF00D4FF);
+  static const completed= Color(0xFF8A8FA8);
+  static const fixtures = Color(0xFF8E5CFF);
+  static const gold     = Color(0xFFFFD700);
+  static const goldDim  = Color(0xFFCC8800);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FIXTURES BRACKET WIDGET
+// ═══════════════════════════════════════════════════════════════════════════════
 class FixturesBracketWidget extends StatelessWidget {
   final List<TournamentMatchModel> matches;
   final String tournamentName;
-  final String tournamentFormat; // 'league', 'single_elimination', etc.
+  final String tournamentFormat;
   final void Function(TournamentMatchModel) onMatchTap;
 
   const FixturesBracketWidget({
@@ -22,18 +40,52 @@ class FixturesBracketWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (matches.isEmpty) {
-      return const Center(
-        child: Text('No fixtures yet', style: TextStyle(color: Colors.white38, fontSize: 20)),
-      );
+      return _buildEmptyState();
     }
-
     return _isLeagueFormat ? _buildLeagueView() : _buildBracketView();
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // LEAGUE FORMAT — flat grid of all fixtures, grouped by status,
-  // no fake "round" labels since league play has no bracket shape.
-  // ═══════════════════════════════════════════════════════════
+  // ── Empty State ─────────────────────────────────────────────────────────────
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 80, height: 80,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: _C.fixtures.withOpacity(0.05),
+              border: Border.all(color: _C.fixtures.withOpacity(0.15)),
+            ),
+            child: Icon(Icons.account_tree_rounded,
+                color: _C.fixtures.withOpacity(0.3), size: 36),
+          ),
+          const SizedBox(height: 20),
+          Text(
+            'No Fixtures Yet',
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.5),
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Matches will appear here once scheduled.',
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.22),
+              fontSize: 13,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // LEAGUE VIEW
+  // ═══════════════════════════════════════════════════════════════════════════
   Widget _buildLeagueView() {
     final sorted = [...matches]..sort((a, b) {
       final da = a.matchDate ?? '';
@@ -42,91 +94,100 @@ class FixturesBracketWidget extends StatelessWidget {
     });
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(32),
+      physics: const BouncingScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(32, 32, 32, 40),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              const Icon(Icons.format_list_bulleted, color: Color(0xFF8E5CFF), size: 26),
-              const SizedBox(width: 10),
-              const Text(
-                'League Fixtures',
-                style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(width: 12),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.06),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text('${sorted.length} matches',
-                    style: const TextStyle(color: Colors.white54, fontSize: 12)),
-              ),
-            ],
+          // Section header
+          _FixturesHeader(
+            icon: Icons.format_list_bulleted_rounded,
+            title: 'League Fixtures',
+            subtitle: '${sorted.length} matches scheduled',
+            color: _C.fixtures,
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 28),
+
+          // Stats summary bar
+          _StatsSummaryBar(matches: sorted),
+          const SizedBox(height: 28),
+
+          // Grid
           GridView.builder(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 4,
-              crossAxisSpacing: 18,
-              mainAxisSpacing: 18,
-              childAspectRatio: 1.15,
+              crossAxisSpacing: 16,
+              mainAxisSpacing: 16,
+              childAspectRatio: 1.05,
             ),
             itemCount: sorted.length,
-            itemBuilder: (context, i) =>
-                _FixtureCard(match: sorted[i], onTap: () => onMatchTap(sorted[i])),
+            itemBuilder: (context, i) => _FixtureCard(
+              match: sorted[i],
+              index: i,
+              onTap: () => onMatchTap(sorted[i]),
+            ),
           ),
         ],
       ),
     );
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // KNOCKOUT / BRACKET FORMAT — only used for single_elimination etc
-  // ═══════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════════════
+  // BRACKET VIEW
+  // ═══════════════════════════════════════════════════════════════════════════
   Widget _buildBracketView() {
     final rounds = _groupIntoRounds(matches);
 
     if (rounds.isEmpty) {
-      return const Center(
-        child: Text('Unable to build fixtures', style: TextStyle(color: Colors.white38, fontSize: 18)),
+      return Center(
+        child: Text(
+          'Unable to build fixtures',
+          style: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 18),
+        ),
       );
     }
 
-    const cardHeight = 150.0;
-    final maxMatchesInAnyRound = rounds.map((r) => r.length).fold(1, (a, b) => a > b ? a : b);
+    const cardHeight = 158.0;
+    final maxMatchesInAnyRound =
+    rounds.map((r) => r.length).fold(1, (a, b) => a > b ? a : b);
     final columnHeight = (maxMatchesInAnyRound * cardHeight).clamp(300.0, 1400.0);
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(32),
+      physics: const BouncingScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(32, 32, 32, 40),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              const Icon(Icons.account_tree_outlined, color: Color(0xFF8E5CFF), size: 26),
-              const SizedBox(width: 10),
-              const Text(
-                'Tournament Fixtures',
-                style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
-              ),
-            ],
+          // Section header
+          _FixturesHeader(
+            icon: Icons.account_tree_rounded,
+            title: 'Tournament Bracket',
+            subtitle: '${rounds.length} rounds · ${matches.length} matches',
+            color: _C.fixtures,
           ),
           const SizedBox(height: 28),
+
+          // Stats summary bar
+          _StatsSummaryBar(matches: matches),
+          const SizedBox(height: 32),
+
+          // Bracket horizontal scroll
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
+            physics: const BouncingScrollPhysics(),
             child: SizedBox(
               height: columnHeight,
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: List.generate(rounds.length, (i) {
                   final isFinal = i == rounds.length - 1;
+                  final label = _roundLabel(i, rounds.length);
                   return _RoundColumn(
-                    roundLabel: _roundLabel(i, rounds.length),
+                    roundLabel: label,
+                    roundIndex: i,
+                    totalRounds: rounds.length,
                     matches: rounds[i],
                     isFinal: isFinal,
                     onMatchTap: onMatchTap,
@@ -140,7 +201,9 @@ class FixturesBracketWidget extends StatelessWidget {
     );
   }
 
-  List<List<TournamentMatchModel>> _groupIntoRounds(List<TournamentMatchModel> matches) {
+  // ── Grouping logic (UNCHANGED) ─────────────────────────────────────────────
+  List<List<TournamentMatchModel>> _groupIntoRounds(
+      List<TournamentMatchModel> matches) {
     final sorted = [...matches]..sort((a, b) {
       final da = a.matchDate ?? '';
       final db = b.matchDate ?? '';
@@ -191,14 +254,205 @@ class FixturesBracketWidget extends StatelessWidget {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// SHARED HEADER
+// ═══════════════════════════════════════════════════════════════════════════════
+class _FixturesHeader extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Color color;
+
+  const _FixturesHeader({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Container(
+          width: 48, height: 48,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            color: color.withOpacity(0.1),
+            border: Border.all(color: color.withOpacity(0.2)),
+            boxShadow: [
+              BoxShadow(color: color.withOpacity(0.12), blurRadius: 16),
+            ],
+          ),
+          child: Icon(icon, color: color, size: 22),
+        ),
+        const SizedBox(width: 16),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 24,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.3,
+              ),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              subtitle,
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.3),
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(width: 20),
+        Expanded(
+          child: Container(
+            height: 1,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [color.withOpacity(0.35), Colors.transparent],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STATS SUMMARY BAR
+// ═══════════════════════════════════════════════════════════════════════════════
+class _StatsSummaryBar extends StatelessWidget {
+  final List<TournamentMatchModel> matches;
+
+  const _StatsSummaryBar({required this.matches});
+
+  @override
+  Widget build(BuildContext context) {
+    final liveCount = matches.where((m) => m.isLive && !m.isCompleted).length;
+    final completedCount = matches.where((m) => m.isCompleted).length;
+    final upcomingCount =
+        matches.where((m) => !m.isLive && !m.isCompleted).length;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.03),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white.withOpacity(0.06)),
+      ),
+      child: Row(
+        children: [
+          _StatItem(
+            label: 'Live',
+            value: '$liveCount',
+            color: _C.live,
+            icon: Icons.radio_button_checked,
+          ),
+          _VertDivider(),
+          _StatItem(
+            label: 'Upcoming',
+            value: '$upcomingCount',
+            color: _C.upcoming,
+            icon: Icons.schedule_rounded,
+          ),
+          _VertDivider(),
+          _StatItem(
+            label: 'Completed',
+            value: '$completedCount',
+            color: _C.completed,
+            icon: Icons.check_circle_rounded,
+          ),
+          _VertDivider(),
+          _StatItem(
+            label: 'Total',
+            value: '${matches.length}',
+            color: _C.fixtures,
+            icon: Icons.sports_cricket,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatItem extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color color;
+  final IconData icon;
+
+  const _StatItem({
+    required this.label,
+    required this.value,
+    required this.color,
+    required this.icon,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, color: color.withOpacity(0.7), size: 13),
+          const SizedBox(width: 8),
+          Text(
+            value,
+            style: TextStyle(
+              color: color,
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.3),
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _VertDivider extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 1,
+      height: 24,
+      color: Colors.white.withOpacity(0.07),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ROUND COLUMN (Bracket)
+// ═══════════════════════════════════════════════════════════════════════════════
 class _RoundColumn extends StatelessWidget {
   final String roundLabel;
+  final int roundIndex;
+  final int totalRounds;
   final List<TournamentMatchModel> matches;
   final bool isFinal;
   final void Function(TournamentMatchModel) onMatchTap;
 
   const _RoundColumn({
     required this.roundLabel,
+    required this.roundIndex,
+    required this.totalRounds,
     required this.matches,
     required this.isFinal,
     required this.onMatchTap,
@@ -207,35 +461,22 @@ class _RoundColumn extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(right: 28),
+      padding: const EdgeInsets.only(right: 24),
       child: SizedBox(
-        width: 230,
+        width: 240,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: isFinal
-                      ? [const Color(0xFFFFD700), const Color(0xFFFFA500)]
-                      : [const Color(0xFF1E3A6E), const Color(0xFF0F2447)],
-                ),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                roundLabel.toUpperCase(),
-                style: TextStyle(
-                  color: isFinal ? Colors.black87 : Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 1,
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            ...matches.map((m) => _FixtureCard(match: m, onTap: () => onMatchTap(m))),
+            // Round label badge
+            _RoundBadge(label: roundLabel, isFinal: isFinal),
+            const SizedBox(height: 20),
+            // Match cards
+            ...matches.map((m) => _FixtureCard(
+              match: m,
+              index: 0,
+              onTap: () => onMatchTap(m),
+            )),
           ],
         ),
       ),
@@ -243,104 +484,253 @@ class _RoundColumn extends StatelessWidget {
   }
 }
 
-class _FixtureCard extends StatelessWidget {
-  final TournamentMatchModel match;
-  final VoidCallback onTap;
+// ─── Round Label Badge ────────────────────────────────────────────────────────
+class _RoundBadge extends StatelessWidget {
+  final String label;
+  final bool isFinal;
 
-  const _FixtureCard({required this.match, required this.onTap});
+  const _RoundBadge({required this.label, required this.isFinal});
 
   @override
   Widget build(BuildContext context) {
-    // ── FIX: trust isCompleted FIRST, before checking isLive at all.
-    // A match that's completed must never show LIVE, regardless of
-    // any other flag combination on the underlying data.
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(10),
+        gradient: isFinal
+            ? const LinearGradient(
+          colors: [_C.gold, _C.goldDim],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        )
+            : LinearGradient(
+          colors: [
+            _C.fixtures.withOpacity(0.2),
+            _C.fixtures.withOpacity(0.08),
+          ],
+        ),
+        border: Border.all(
+          color: isFinal
+              ? _C.gold.withOpacity(0.5)
+              : _C.fixtures.withOpacity(0.3),
+        ),
+        boxShadow: isFinal
+            ? [BoxShadow(color: _C.gold.withOpacity(0.2), blurRadius: 12)]
+            : [BoxShadow(color: _C.fixtures.withOpacity(0.1), blurRadius: 8)],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            isFinal ? Icons.emoji_events_rounded : Icons.account_tree_rounded,
+            color: isFinal ? Colors.black87 : _C.fixtures,
+            size: 13,
+          ),
+          const SizedBox(width: 7),
+          Text(
+            label.toUpperCase(),
+            style: TextStyle(
+              color: isFinal ? Colors.black87 : _C.fixtures,
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 1.2,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FIXTURE CARD
+// ═══════════════════════════════════════════════════════════════════════════════
+class _FixtureCard extends StatelessWidget {
+  final TournamentMatchModel match;
+  final int index;
+  final VoidCallback onTap;
+
+  const _FixtureCard({
+    required this.match,
+    required this.index,
+    required this.onTap,
+  });
+
+  Color get _statusColor {
+    if (match.isCompleted)                return _C.completed;
+    if (!match.isCompleted && match.isLive) return _C.live;
+    return _C.upcoming;
+  }
+
+  String get _statusLabel {
+    if (match.isCompleted)                return 'DONE';
+    if (!match.isCompleted && match.isLive) return 'LIVE';
+    return 'SOON';
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final isCompleted = match.isCompleted;
     final isLive = !isCompleted && match.isLive;
-
-    final statusColor = isLive
-        ? Colors.redAccent
-        : isCompleted
-        ? Colors.white38
-        : const Color(0xFF00A3FF);
+    final sc = _statusColor;
 
     return Focus(
-      child: Builder(builder: (context) {
-        final isFocused = Focus.of(context).hasFocus;
+      child: Builder(builder: (ctx) {
+        final focused = Focus.of(ctx).hasFocus;
+
         return Padding(
-          padding: const EdgeInsets.only(bottom: 16),
+          padding: const EdgeInsets.only(bottom: 14),
           child: GestureDetector(
             onTap: onTap,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 200),
-              transform: Matrix4.identity()..scale(isFocused ? 1.03 : 1.0),
+              curve: Curves.easeOut,
+              transform: Matrix4.identity()
+                ..translate(0.0, focused ? -2.0 : 0.0),
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(16),
                 border: Border.all(
-                  color: isFocused
-                      ? statusColor
-                      : (isLive ? statusColor.withOpacity(0.5) : Colors.white.withOpacity(0.12)),
-                  width: isFocused ? 2 : 1,
+                  color: focused
+                      ? sc
+                      : isLive
+                      ? sc.withOpacity(0.4)
+                      : Colors.white.withOpacity(0.08),
+                  width: focused ? 1.5 : 1,
                 ),
-                boxShadow: isFocused
-                    ? [BoxShadow(color: statusColor.withOpacity(0.3), blurRadius: 16, spreadRadius: 1)]
-                    : [],
+                boxShadow: [
+                  if (focused)
+                    BoxShadow(
+                      color: sc.withOpacity(0.3),
+                      blurRadius: 18,
+                      spreadRadius: 0,
+                    ),
+                  if (isLive && !focused)
+                    BoxShadow(
+                      color: _C.live.withOpacity(0.08),
+                      blurRadius: 10,
+                    ),
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.25),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
               ),
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(16),
                 child: BackdropFilter(
                   filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
                   child: Container(
-                    padding: const EdgeInsets.all(14),
-                    color: isLive
-                        ? Colors.redAccent.withOpacity(0.05)
-                        : Colors.white.withOpacity(0.03),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: isLive
+                            ? [
+                          _C.live.withOpacity(0.07),
+                          _C.surface.withOpacity(0.9),
+                        ]
+                            : [
+                          _C.surfaceH.withOpacity(0.75),
+                          _C.surface.withOpacity(0.9),
+                        ],
+                      ),
+                    ),
+                    child: Stack(
                       children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Expanded(child: _teamRow(match.teamId1Name)),
-                            if (isLive)
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: Colors.redAccent,
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: const Text('LIVE',
-                                    style: TextStyle(
-                                        color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
-                              )
-                            else if (isCompleted)
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withOpacity(0.15),
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: const Text('DONE',
-                                    style: TextStyle(
-                                        color: Colors.white70, fontSize: 9, fontWeight: FontWeight.bold)),
+                        // Top accent line
+                        Positioned(
+                          top: 0, left: 16, right: 16,
+                          child: Container(
+                            height: 1,
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: [
+                                  Colors.transparent,
+                                  Colors.white.withOpacity(focused ? 0.07 : 0.03),
+                                  Colors.transparent,
+                                ],
                               ),
-                          ],
+                            ),
+                          ),
                         ),
-                        const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 4),
-                          child: Text('vs',
-                              style: TextStyle(
-                                  color: Colors.white38, fontSize: 10, fontWeight: FontWeight.w600)),
-                        ),
-                        _teamRow(match.teamId2Name),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            const Icon(Icons.sports_cricket, color: Colors.white24, size: 11),
-                            const SizedBox(width: 4),
-                            Text('${match.overs} ov',
-                                style: const TextStyle(color: Colors.white38, fontSize: 10)),
-                          ],
+
+                        Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // ── Status + overs row ──────────────────────
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  _CompactStatusBadge(
+                                    label: _statusLabel,
+                                    color: sc,
+                                    isLive: isLive,
+                                  ),
+                                  Row(
+                                    children: [
+                                      Icon(Icons.sports_cricket,
+                                          color: Colors.white.withOpacity(0.2),
+                                          size: 10),
+                                      const SizedBox(width: 3),
+                                      Text(
+                                        '${match.overs} ov',
+                                        style: TextStyle(
+                                          color: Colors.white.withOpacity(0.3),
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+
+                              const SizedBox(height: 12),
+
+                              // ── Team 1 ──────────────────────────────────
+                              _CardTeamRow(name: match.teamId1Name, color: sc),
+
+                              // ── VS divider ───────────────────────────────
+                              Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 6),
+                                child: Row(
+                                  children: [
+                                    const SizedBox(width: 30),
+                                    Text(
+                                      'vs',
+                                      style: TextStyle(
+                                        color: Colors.white.withOpacity(0.2),
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w600,
+                                        letterSpacing: 0.5,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Expanded(
+                                      child: Container(
+                                        height: 1,
+                                        decoration: BoxDecoration(
+                                          gradient: LinearGradient(
+                                            colors: [
+                                              Colors.white.withOpacity(0.06),
+                                              Colors.transparent,
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+
+                              // ── Team 2 ──────────────────────────────────
+                              _CardTeamRow(name: match.teamId2Name, color: sc),
+                            ],
+                          ),
                         ),
                       ],
                     ),
@@ -353,30 +743,110 @@ class _FixtureCard extends StatelessWidget {
       }),
     );
   }
+}
 
-  Widget _teamRow(String name) {
+// ─── Compact Status Badge (for FixtureCard) ────────────────────────────────────
+class _CompactStatusBadge extends StatelessWidget {
+  final String label;
+  final Color color;
+  final bool isLive;
+
+  const _CompactStatusBadge({
+    required this.label,
+    required this.color,
+    required this.isLive,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withOpacity(isLive ? 0.15 : 0.08),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withOpacity(0.3)),
+        boxShadow: isLive
+            ? [BoxShadow(color: color.withOpacity(0.2), blurRadius: 6)]
+            : [],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (isLive) ...[
+            Container(
+              width: 5, height: 5,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: color,
+                boxShadow: [
+                  BoxShadow(color: color.withOpacity(0.8), blurRadius: 4),
+                ],
+              ),
+            ),
+            const SizedBox(width: 4),
+          ],
+          Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontSize: 9,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.8,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Card Team Row ────────────────────────────────────────────────────────────
+class _CardTeamRow extends StatelessWidget {
+  final String name;
+  final Color color;
+
+  const _CardTeamRow({required this.name, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
     final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
     return Row(
       children: [
         Container(
-          width: 22,
-          height: 22,
+          width: 24, height: 24,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: const Color(0xFF00A3FF).withOpacity(0.15),
-            border: Border.all(color: const Color(0xFF00A3FF), width: 1),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                color.withOpacity(0.25),
+                color.withOpacity(0.06),
+              ],
+            ),
+            border: Border.all(color: color.withOpacity(0.3), width: 1),
           ),
           child: Center(
-            child: Text(initial,
-                style: const TextStyle(
-                    color: Color(0xFF00A3FF), fontSize: 10, fontWeight: FontWeight.bold)),
+            child: Text(
+              initial,
+              style: TextStyle(
+                color: color,
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
           ),
         ),
         const SizedBox(width: 8),
         Expanded(
           child: Text(
             name.isEmpty ? 'TBD' : name,
-            style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.1,
+            ),
             overflow: TextOverflow.ellipsis,
           ),
         ),
