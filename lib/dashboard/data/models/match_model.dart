@@ -8,6 +8,7 @@ class MatchModel extends MatchEntity {
     required super.teamId2Name,
     required super.isCompleted,
     required super.batBowlFlag,
+    required super.status,   // ← ADDED
   });
 
   factory MatchModel.fromMap(
@@ -23,6 +24,7 @@ class MatchModel extends MatchEntity {
       batBowlFlag: (data['batBowlFlag'] ?? 0) is int
           ? data['batBowlFlag'] ?? 0
           : int.tryParse(data['batBowlFlag'].toString()) ?? 0,
+      status: (data['status'] as String?) ?? 'scheduled',  // ← ADDED
     );
   }
 }

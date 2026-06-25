@@ -16,8 +16,8 @@ class InningsModel extends InningsEntity {
       id: id,
       battingTeamId: data['battingTeamId'] ?? '',
       bowlingTeamId: data['bowlingTeamId'] ?? '',
-      isCompleted: data['isCompleted'] ?? false,
-      isSecondInnings: data['isSecondInnings'] ?? false,
+     isCompleted: data['isCompleted'] == true,
+isSecondInnings: data['isSecondInnings'] == true,
       targetRuns: data['targetRuns'],
     );
   }

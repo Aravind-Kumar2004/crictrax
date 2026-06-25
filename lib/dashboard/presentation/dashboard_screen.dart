@@ -238,15 +238,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               final t = _tournaments[index];
                               return TournamentCardWidget(
                                 tournament: t,
-                                onTap: () => Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => TournamentDetailScreen(
-                                      tournamentId: t.id,
-                                      tournament: t,
-                                    ),
-                                  ),
-                                ),
+                            onTap: () => Navigator.push(
+  context,
+  MaterialPageRoute(
+    builder: (_) => TournamentDetailScreen(
+      tournamentId: t.id,
+      tournament: t,
+      sessionId: widget.sessionId, // ← ADD
+    ),
+  ),
+),
                               );
                             },
                           ),

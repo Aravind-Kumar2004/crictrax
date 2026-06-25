@@ -10,6 +10,7 @@ class TournamentMatchModel extends TournamentMatchEntity {
     required super.overs,
     required super.isCompleted,
     required super.batBowlFlag,
+    required super.status,   // ← ADD
     super.matchDate,
   });
 
@@ -25,8 +26,11 @@ class TournamentMatchModel extends TournamentMatchEntity {
       teamId1: data['teamId1'] ?? '',
       teamId2: data['teamId2'] ?? '',
       overs: data['overs'] ?? 0,
-      isCompleted: data['isCompleted'] ?? false,
-      batBowlFlag: data['batBowlFlag'] ?? 0,
+      isCompleted: data['isCompleted'] == true,
+      batBowlFlag: (data['batBowlFlag'] ?? 0) is int
+          ? data['batBowlFlag'] ?? 0
+          : int.tryParse(data['batBowlFlag'].toString()) ?? 0,
+      status: (data['status'] as String?) ?? 'scheduled',  // ← ADD
       matchDate: data['matchDate'],
     );
   }

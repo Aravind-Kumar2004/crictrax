@@ -4,10 +4,11 @@ class TournamentMatchEntity {
   final String teamId2Name;
   final String teamId1;
   final String teamId2;
-  final int overs;
+  final dynamic overs;
   final bool isCompleted;
   final int batBowlFlag;
-  final String? matchDate;
+  final String status;     // ← ADD
+  final dynamic matchDate;
 
   const TournamentMatchEntity({
     required this.id,
@@ -18,9 +19,9 @@ class TournamentMatchEntity {
     required this.overs,
     required this.isCompleted,
     required this.batBowlFlag,
+    required this.status,    // ← ADD
     this.matchDate,
   });
 
-  bool get isLive => !isCompleted && batBowlFlag > 0;
-  bool get isUpcoming => !isCompleted && batBowlFlag == 0;
+  bool get isLive => !isCompleted && status == 'live';  // ← ADD
 }
