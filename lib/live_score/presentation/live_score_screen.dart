@@ -62,7 +62,8 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
     with SingleTickerProviderStateMixin {
   // ── Business Logic State (COMPLETELY UNCHANGED) ──────────────────────────
   final _repo = LiveScoreRepository();
-  bool _hasNavigatedAway = false;
+ bool _hasNavigatedAway = false;
+  bool _dialogShown = false;
   Timer? _autoDismissTimer;
   Timer? _reconnectTimer;
   Timer? _heartbeatTimer;
@@ -473,8 +474,11 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
     );
   }
 
-  void _showMatchEndedAndPop(
+void _showMatchEndedAndPop(
       BuildContext context, Map<String, dynamic> matchData) {
+    if (!mounted || _dialogShown) return;
+    _dialogShown = true;
+
     final resultText =
         matchData['result'] as String? ?? 'Match Completed';
 
@@ -484,12 +488,34 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
       barrierColor: Colors.black.withOpacity(0.85),
       builder: (dialogContext) => _MatchEndedDialog(
         resultText: resultText,
+        onViewSummary: () {
+          _autoDismissTimer?.cancel();
+          try {
+            if (Navigator.of(dialogContext, rootNavigator: true).canPop()) {
+              Navigator.of(dialogContext, rootNavigator: true).pop();
+            }
+          } catch (_) {}
+          if (mounted) {
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(
+                builder: (_) => _MatchSummaryScreen(
+                  tournamentId: widget.tournamentId,
+                  matchId: widget.matchId,
+                  team1Name: widget.team1Name,
+                  team2Name: widget.team2Name,
+                  resultText: resultText,
+                  repo: _repo,
+                ),
+              ),
+            );
+          }
+        },
         onBack: () => _dismissAndPop(),
       ),
     );
 
     _autoDismissTimer?.cancel();
-    _autoDismissTimer = Timer(const Duration(seconds: 4), () {
+    _autoDismissTimer = Timer(const Duration(seconds: 10), () {
       if (!mounted) return;
       _dismissAndPop();
     });
@@ -497,18 +523,14 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
 
   void _dismissAndPop() {
     _autoDismissTimer?.cancel();
-    final nav = Navigator.of(context);
-    nav.popUntil((route) {
-      return route.settings.name != null ||
-          route.isFirst ||
-          _isOnTournamentDetail(route);
-    });
-    if (nav.canPop()) nav.pop();
-    if (nav.canPop()) nav.pop();
-  }
-
-  bool _isOnTournamentDetail(Route route) {
-    return route.settings.name == '/tournament_detail';
+    try {
+      final nav = Navigator.of(context, rootNavigator: true);
+      if (nav.canPop()) nav.pop();
+    } catch (_) {}
+    try {
+      final nav = Navigator.of(context);
+      if (nav.canPop()) nav.pop();
+    } catch (_) {}
   }
 
   Widget _buildStatusBar(
@@ -522,6 +544,459 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
       isError: true,
     );
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MATCH SUMMARY SCREEN
+// ═══════════════════════════════════════════════════════════════════════════════
+class _MatchSummaryScreen extends StatefulWidget {
+  final String tournamentId;
+  final String matchId;
+  final String team1Name;
+  final String team2Name;
+  final String resultText;
+  final LiveScoreRepository repo;
+
+  const _MatchSummaryScreen({
+    required this.tournamentId,
+    required this.matchId,
+    required this.team1Name,
+    required this.team2Name,
+    required this.resultText,
+    required this.repo,
+  });
+
+  @override
+  State<_MatchSummaryScreen> createState() =>
+      _MatchSummaryScreenState();
+}
+
+class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
+  Map<String, List<Map<String, dynamic>>> _batsmen = {};
+  Map<String, List<Map<String, dynamic>>> _bowlers = {};
+  Map<String, Map<String, dynamic>> _innData = {};
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final db = FirebaseFirestore.instance;
+      final base = db
+          .collection('tournaments')
+          .doc(widget.tournamentId)
+          .collection('matches')
+          .doc(widget.matchId);
+      final inningsSnap = await base.collection('innings').get();
+      for (final inn in inningsSnap.docs) {
+        final innData = inn.data();
+        _innData[inn.id] = innData;
+        final bSnap = await base
+            .collection('innings')
+            .doc(inn.id)
+            .collection('batsmen')
+            .get();
+        final wSnap = await base
+            .collection('innings')
+            .doc(inn.id)
+            .collection('bowlers')
+            .get();
+        _batsmen[inn.id] =
+            bSnap.docs.map((d) => d.data()).toList();
+        _bowlers[inn.id] =
+            wSnap.docs.map((d) => d.data()).toList();
+      }
+      if (mounted) setState(() => _loading = false);
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _C.bg,
+      body: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(
+                horizontal: 32, vertical: 20),
+            color: Colors.black.withOpacity(0.4),
+            child: Row(
+              children: [
+                GestureDetector(
+                  onTap: () => Navigator.pop(context),
+                  child: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.arrow_back,
+                        color: Colors.white, size: 20),
+                  ),
+                ),
+                const SizedBox(width: 20),
+                const Icon(Icons.emoji_events,
+                    color: _C.gold, size: 28),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${widget.team1Name} vs ${widget.team2Name}',
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold),
+                      ),
+                      Text(
+                        widget.resultText,
+                        style: const TextStyle(
+                            color: _C.orange,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600),
+                      ),
+                    ],
+                  ),
+                ),
+                ElevatedButton.icon(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.arrow_back, size: 16),
+                  label: const Text('Back to Tournament'),
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: _C.accent,
+                      foregroundColor: Colors.white),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: _loading
+                ? const Center(
+                    child: CircularProgressIndicator(
+                        color: _C.accent))
+                : _buildSummary(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSummary() {
+    if (_innData.isEmpty) {
+      return Center(
+        child: Text('No match data available',
+            style: TextStyle(
+                color: Colors.white.withOpacity(0.38),
+                fontSize: 18)),
+      );
+    }
+
+    final inningsList = _innData.entries.toList()
+      ..sort((a, b) {
+        final aS = a.value['isSecondInnings'] == true ? 1 : 0;
+        final bS = b.value['isSecondInnings'] == true ? 1 : 0;
+        return aS.compareTo(bS);
+      });
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(32),
+      child: Column(
+        children: inningsList.map((entry) {
+          final innId = entry.key;
+          final inn = entry.value;
+          final isSecond = inn['isSecondInnings'] == true;
+          final batTeam =
+              (inn['battingTeamName'] ?? '').toString();
+          final batsmen = _batsmen[innId] ?? [];
+          final bowlers = _bowlers[innId] ?? [];
+          final totalRuns = batsmen.fold(
+              0,
+              (s, b) =>
+                  s + ((b['runs'] ?? 0) as num).toInt());
+          final totalWkts =
+              batsmen.where((b) => b['isOut'] == true).length;
+          final totalBalls = batsmen.fold(
+              0,
+              (s, b) =>
+                  s +
+                  ((b['ballsFaced'] ?? 0) as num).toInt());
+          final overs =
+              '${totalBalls ~/ 6}.${totalBalls % 6}';
+
+          return Container(
+            margin: const EdgeInsets.only(bottom: 32),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.03),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                  color: Colors.white.withOpacity(0.08)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 24, vertical: 14),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.04),
+                    borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(16)),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: _C.purple.withOpacity(0.2),
+                          borderRadius:
+                              BorderRadius.circular(6),
+                          border: Border.all(
+                              color:
+                                  _C.purple.withOpacity(0.4)),
+                        ),
+                        child: Text(
+                          'Innings ${isSecond ? 2 : 1}',
+                          style: const TextStyle(
+                              color: _C.purple,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Text(
+                          batTeam.isNotEmpty
+                              ? batTeam
+                              : 'Batting Team',
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                      Text(
+                        '$totalRuns/$totalWkts ($overs ov)',
+                        style: const TextStyle(
+                          color: _C.orange,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Row(
+                    crossAxisAlignment:
+                        CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment:
+                              CrossAxisAlignment.start,
+                          children: [
+                            _summaryLabel(
+                                'BATTING', _C.orange),
+                            const SizedBox(height: 8),
+                            _summaryHeader([
+                              'Batter',
+                              'R',
+                              'B',
+                              '4s',
+                              '6s',
+                              'SR'
+                            ]),
+                            const Divider(
+                                color: Colors.white12,
+                                height: 8),
+                            ...(batsmen
+                                  ..sort((a, b) =>
+                                      ((b['runs'] ?? 0) as num)
+                                          .compareTo(
+                                              (a['runs'] ?? 0)
+                                              as num)))
+                                .map((b) => _batsmanRow(b)),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 32),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment:
+                              CrossAxisAlignment.start,
+                          children: [
+                            _summaryLabel(
+                                'BOWLING', _C.accent),
+                            const SizedBox(height: 8),
+                            _summaryHeader([
+                              'Bowler',
+                              'O',
+                              'R',
+                              'W',
+                              'Eco'
+                            ]),
+                            const Divider(
+                                color: Colors.white12,
+                                height: 8),
+                            ...(bowlers
+                                  ..sort((a, b) => ((b['wickets'] ??
+                                              0) as num)
+                                          .compareTo(
+                                              (a['wickets'] ?? 0)
+                                              as num)))
+                                .map((b) => _bowlerRow(b)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  Widget _summaryLabel(String text, Color color) => Row(
+        children: [
+          Container(
+              width: 3,
+              height: 16,
+              color: color,
+              margin: const EdgeInsets.only(right: 8)),
+          Text(text,
+              style: TextStyle(
+                  color: color,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1.2)),
+        ],
+      );
+
+  Widget _summaryHeader(List<String> cols) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          children: [
+            Expanded(
+                child: Text(cols[0],
+                    style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700))),
+            ...cols.skip(1).map((c) => SizedBox(
+                  width: 42,
+                  child: Text(c,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                          color: Colors.white38,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700)),
+                )),
+          ],
+        ),
+      );
+
+  Widget _batsmanRow(Map<String, dynamic> b) {
+    final name =
+        (b['playerName'] ?? b['name'] ?? '').toString();
+    final runs = (b['runs'] ?? 0) as num;
+    final balls = (b['ballsFaced'] ?? 0) as num;
+    final fours = (b['fours'] ?? 0) as num;
+    final sixes = (b['sixes'] ?? 0) as num;
+    final sr = balls > 0
+        ? ((runs / balls) * 100).toStringAsFixed(1)
+        : '0.0';
+    final isOut = b['isOut'] == true;
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      decoration: const BoxDecoration(
+          border: Border(
+              bottom: BorderSide(
+                  color: Colors.white10, width: 0.5))),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              name.length > 16
+                  ? '${name.substring(0, 16)}…'
+                  : name,
+              style: TextStyle(
+                  color: isOut
+                      ? Colors.white54
+                      : Colors.white70,
+                  fontSize: 13),
+            ),
+          ),
+          _sc('$runs', bold: true, color: _C.orange),
+          _sc('$balls'),
+          _sc('$fours'),
+          _sc('$sixes'),
+          _sc(sr),
+        ],
+      ),
+    );
+  }
+
+  Widget _bowlerRow(Map<String, dynamic> b) {
+    final name =
+        (b['playerName'] ?? b['name'] ?? '').toString();
+    final overs = b['overs'] ?? 0;
+    final runs =
+        (b['runsConceded'] ?? b['runs'] ?? 0) as num;
+    final wkts = (b['wickets'] ?? 0) as num;
+    final eco = (b['economy'] ?? 0) as num;
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      decoration: const BoxDecoration(
+          border: Border(
+              bottom: BorderSide(
+                  color: Colors.white10, width: 0.5))),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              name.length > 16
+                  ? '${name.substring(0, 16)}…'
+                  : name,
+              style: const TextStyle(
+                  color: Colors.white70, fontSize: 13),
+            ),
+          ),
+          _sc('$overs'),
+          _sc('$runs'),
+          _sc('$wkts',
+              bold: true,
+              color: wkts >= 3 ? _C.orange : Colors.white),
+          _sc(eco.toStringAsFixed(1)),
+        ],
+      ),
+    );
+  }
+
+  Widget _sc(String t,
+          {bool bold = false, Color? color}) =>
+      SizedBox(
+        width: 42,
+        child: Text(t,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+                color: color ?? Colors.white60,
+                fontSize: 13,
+                fontWeight: bold
+                    ? FontWeight.w800
+                    : FontWeight.w500)),
+      );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -947,17 +1422,19 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
   late Stream<QuerySnapshot> _bowlersStream = widget.repo.watchBowlers(
       widget.tournamentId, widget.matchId, widget.inningsId);
 
-  @override
+@override
   void didUpdateWidget(covariant _BroadcastBottomPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.inningsId != _trackedInningsId) {
       _trackedInningsId = widget.inningsId;
-      _cachedBatsmen = [];
-      _cachedBowler = null;
-      _batsmenStream = widget.repo.watchBatsmen(
-          widget.tournamentId, widget.matchId, widget.inningsId);
-      _bowlersStream = widget.repo.watchBowlers(
-          widget.tournamentId, widget.matchId, widget.inningsId);
+      setState(() {
+        _cachedBatsmen = [];
+        _cachedBowler = null;
+        _batsmenStream = widget.repo.watchBatsmen(
+            widget.tournamentId, widget.matchId, widget.inningsId);
+        _bowlersStream = widget.repo.watchBowlers(
+            widget.tournamentId, widget.matchId, widget.inningsId);
+      });
     }
   }
 
@@ -1056,29 +1533,88 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
         return StreamBuilder<QuerySnapshot>(
           stream: _bowlersStream,
           builder: (context, bowlSnap) {
-            if (bowlSnap.hasData && bowlSnap.data!.docs.isNotEmpty) {
+         if (bowlSnap.hasData && bowlSnap.data!.docs.isNotEmpty) {
               final bowlers = bowlSnap.data!.docs
                   .map((d) => d.data() as Map<String, dynamic>)
                   .toList();
-              final withTimestamp = bowlers
-                  .where((b) => b['lastUpdated'] is Timestamp)
-                  .toList();
-              if (withTimestamp.isNotEmpty) {
-                withTimestamp.sort((a, b) =>
-                    (b['lastUpdated'] as Timestamp)
-                        .compareTo(a['lastUpdated'] as Timestamp));
-                _cachedBowler = withTimestamp.first;
+
+              // Helper: safely parse overs to double
+              // e.g. "0.2" → 0.2,  1 → 1.0,  "2.0" → 2.0
+              double parseOvers(dynamic raw) {
+                if (raw == null) return 0.0;
+                if (raw is num) return raw.toDouble();
+                return double.tryParse(raw.toString()) ?? 0.0;
+              }
+
+              // Helper: true if bowler is mid-over
+              // overs=0.2 → balls digit=2 → mid-over ✅
+              // overs=1.0 → balls digit=0 → over complete ❌
+              // overs=2.0 → balls digit=0 → over complete ❌
+              bool isMidOver(Map<String, dynamic> b) {
+                final ov = parseOvers(b['overs']);
+                // multiply by 10, round, mod 10 → isolates the balls digit
+                final ballsDigit = (ov * 10).round() % 10;
+                return ballsDigit > 0;
+              }
+
+              // PRIORITY 1: bowler currently mid-over
+              // This is the definitive signal — rashid at 0.2 wins over
+              // Miller at 1.0 regardless of timestamps
+              final midOverBowlers = bowlers.where(isMidOver).toList();
+
+              if (midOverBowlers.isNotEmpty) {
+                // Multiple mid-over bowlers shouldn't happen,
+                // but if so: prefer isBowling=true, then latest timestamp
+                midOverBowlers.sort((a, b) {
+                  final aActive = a['isBowling'] == true ? 0 : 1;
+                  final bActive = b['isBowling'] == true ? 0 : 1;
+                  if (aActive != bActive) return aActive.compareTo(bActive);
+                  final aTs = a['lastUpdated'];
+                  final bTs = b['lastUpdated'];
+                  if (aTs is Timestamp && bTs is Timestamp) {
+                    return bTs.compareTo(aTs);
+                  }
+                  return 0;
+                });
+                _cachedBowler = midOverBowlers.first;
+
               } else {
-                final bowling = bowlers
+                // PRIORITY 2: isBowling flag
+                // Catches the case where a new over just started
+                // (0 balls bowled yet, so overs=0.0 or whole number)
+                final flaggedBowlers = bowlers
                     .where((b) => b['isBowling'] == true)
                     .toList();
-                _cachedBowler = bowling.isNotEmpty
-                    ? bowling.first
-                    : bowlers.last;
+
+                if (flaggedBowlers.isNotEmpty) {
+                  flaggedBowlers.sort((a, b) {
+                    final aTs = a['lastUpdated'];
+                    final bTs = b['lastUpdated'];
+                    if (aTs is Timestamp && bTs is Timestamp) {
+                      return bTs.compareTo(aTs);
+                    }
+                    return 0;
+                  });
+                  _cachedBowler = flaggedBowlers.first;
+
+                } else {
+                  // PRIORITY 3: most recently updated bowler
+                  final withTimestamp = bowlers
+                      .where((b) => b['lastUpdated'] is Timestamp)
+                      .toList();
+                  if (withTimestamp.isNotEmpty) {
+                    withTimestamp.sort((a, b) =>
+                        (b['lastUpdated'] as Timestamp)
+                            .compareTo(a['lastUpdated'] as Timestamp));
+                    _cachedBowler = withTimestamp.first;
+                  } else {
+                    // PRIORITY 4: last document as final fallback
+                    _cachedBowler = bowlers.last;
+                  }
+                }
               }
             }
             final bowler = _cachedBowler;
-
             final crr = totalBalls > 0
                 ? (totalRuns / totalBalls) * 6
                 : (widget.innData['currentRunRate'] ?? 0.0);
@@ -2247,9 +2783,13 @@ class _BroadcastStatusBar extends StatelessWidget {
 class _MatchEndedDialog extends StatelessWidget {
   final String resultText;
   final VoidCallback onBack;
+  final VoidCallback onViewSummary;
 
-  const _MatchEndedDialog(
-      {required this.resultText, required this.onBack});
+  const _MatchEndedDialog({
+    required this.resultText,
+    required this.onBack,
+    required this.onViewSummary,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -2287,7 +2827,7 @@ class _MatchEndedDialog extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Trophy
+                // Trophy icon
                 Container(
                   width: 76,
                   height: 76,
@@ -2336,72 +2876,109 @@ class _MatchEndedDialog extends StatelessWidget {
 
                 const SizedBox(height: 18),
 
+                // Result text box
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(
                       horizontal: 22, vertical: 14),
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.04),
+                    color: _C.orange.withOpacity(0.08),
                     borderRadius: BorderRadius.circular(14),
                     border: Border.all(
-                        color: Colors.white.withOpacity(0.07)),
+                        color: _C.orange.withOpacity(0.25)),
                   ),
                   child: Text(
                     resultText,
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.55),
-                      fontSize: 15,
-                      height: 1.5,
+                    style: const TextStyle(
+                      color: _C.orange,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
                     ),
                     textAlign: TextAlign.center,
                   ),
                 ),
 
-                const SizedBox(height: 28),
+                const SizedBox(height: 10),
 
-                Focus(
-                  child: Builder(builder: (ctx) {
-                    final focused = Focus.of(ctx).hasFocus;
-                    return GestureDetector(
-                      onTap: onBack,
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 150),
-                        width: double.infinity,
-                        padding:
-                        const EdgeInsets.symmetric(vertical: 16),
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: focused
-                                ? [_C.accent, _C.accentDim]
-                                : [
-                              _C.accent.withOpacity(0.85),
-                              _C.accentDim.withOpacity(0.85)
-                            ],
+                Text(
+                  'What would you like to do?',
+                  style: TextStyle(
+                      color: Colors.white.withOpacity(0.3),
+                      fontSize: 13),
+                ),
+
+                const SizedBox(height: 24),
+
+                // View Match Summary button
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: onViewSummary,
+                    icon: const Icon(Icons.bar_chart, size: 18),
+                    label: const Text('View Match Summary',
+                        style: TextStyle(fontSize: 15)),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: _C.purple,
+                      side:
+                          BorderSide(color: _C.purple, width: 1.5),
+                      padding: const EdgeInsets.symmetric(
+                          vertical: 16),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 10),
+
+                // Back to Tournament button
+                SizedBox(
+                  width: double.infinity,
+                  child: Focus(
+                    child: Builder(builder: (ctx) {
+                      final focused = Focus.of(ctx).hasFocus;
+                      return GestureDetector(
+                        onTap: onBack,
+                        child: AnimatedContainer(
+                          duration:
+                              const Duration(milliseconds: 150),
+                          padding: const EdgeInsets.symmetric(
+                              vertical: 16),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: focused
+                                  ? [_C.accent, _C.accentDim]
+                                  : [
+                                      _C.accent.withOpacity(0.85),
+                                      _C.accentDim.withOpacity(0.85),
+                                    ],
+                            ),
+                            borderRadius:
+                                BorderRadius.circular(14),
+                            boxShadow: focused
+                                ? [
+                                    BoxShadow(
+                                        color: _C.accent
+                                            .withOpacity(0.4),
+                                        blurRadius: 20)
+                                  ]
+                                : [],
                           ),
-                          borderRadius: BorderRadius.circular(14),
-                          boxShadow: focused
-                              ? [
-                            BoxShadow(
-                                color: _C.accent
-                                    .withOpacity(0.4),
-                                blurRadius: 20)
-                          ]
-                              : [],
-                        ),
-                        child: const Center(
-                          child: Text(
-                            'Back to Tournament',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 0.3,
+                          child: const Center(
+                            child: Text(
+                              'Back to Tournament',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0.3,
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                    );
-                  }),
+                      );
+                    }),
+                  ),
                 ),
               ],
             ),
