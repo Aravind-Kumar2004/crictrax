@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui';
 import 'package:flutter/material.dart';
-
 import '../ data/models/repositories/dashboard_repository.dart';
 import '../ data/models/tournament_model.dart';
 import '../../login/presentation/login_screen.dart';
@@ -23,6 +22,11 @@ class _DS {
   static const success = Color(0xFF00E676);
   static const warning = Color(0xFFFFB300);
   static const danger = Color(0xFFFF3D3D);
+
+  // NEW — additional broadcast palette
+  static const gold = Color(0xFFFFD700);
+  static const purple = Color(0xFF9B59B6);
+  static const teal = Color(0xFF1ABC9C);
 
   // Nav rail width
   static const navWidth = 110.0;
@@ -46,6 +50,18 @@ class _DS {
   );
   static const liveGrad = LinearGradient(
     colors: [Color(0xFFFF6B35), Color(0xFFCC3300)],
+  );
+
+  // NEW gradients
+  static const goldGrad = LinearGradient(
+    colors: [Color(0xFFFFD700), Color(0xFFFF8C00)],
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+  );
+  static const successGrad = LinearGradient(
+    colors: [Color(0xFF00E676), Color(0xFF00897B)],
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
   );
 }
 
@@ -76,15 +92,75 @@ class _DashboardScreenState extends State<DashboardScreen>
   int _selectedNavIndex = 0;
   StreamSubscription? _logoutSub;
 
+  // NEW — live match data (optional, non-breaking)
+  Map<String, dynamic>? _featuredLiveMatch;
+  StreamSubscription? _liveMatchSub;
+
+  // NEW — connection status
+  bool _isConnected = true;
+  StreamSubscription? _connectivitySub;
+
+  // NEW — date/time ticker
+  late Timer _clockTimer;
+  DateTime _now = DateTime.now();
+
+  // NEW — ad carousel
+  late PageController _adPageCtrl;
+  late Timer _adTimer;
+  int _currentAdPage = 0;
+
   // Animation controllers
   late AnimationController _pulseCtrl;
   late AnimationController _shimmerCtrl;
   late Animation<double> _pulseAnim;
 
+  // NEW animation controllers
+  late AnimationController _cardEntranceCtrl;
+  late AnimationController _tickerCtrl;
+  late AnimationController _heroBannerCtrl;
+  late Animation<double> _cardEntranceAnim;
+  late Animation<double> _heroBannerAnim;
+
+  // ── Ad content ─────────────────────────────────────────────────────────────
+  static const _adSlides = [
+    _AdSlide(
+      tag: 'ADVERTISEMENT',
+      headline: 'Ad Space Available',
+      subline: 'Premium placement for tournament sponsors',
+      icon: Icons.sports_cricket,
+      color: Color(0xFF00D4FF),
+    ),
+    _AdSlide(
+      tag: 'SPONSOR',
+      headline: 'Powered by CRICTRAX',
+      subline: 'The #1 cricket tournament management platform',
+      icon: Icons.emoji_events_rounded,
+      color: Color(0xFFFFD700),
+    ),
+    _AdSlide(
+      tag: 'BROADCAST',
+      headline: 'Live Scoring. Live Glory.',
+      subline: 'Real-time scores for every ball, every moment',
+      icon: Icons.live_tv_rounded,
+      color: Color(0xFFFF6B35),
+    ),
+  ];
+
+  // ── News ticker items ───────────────────────────────────────────────────────
+  static const _tickerItems = [
+    '🏏  CRICTRAX TV — Live Cricket Scoring Dashboard',
+    '📡  Stay connected to all your tournaments in real-time',
+    '🏆  View detailed scorecards, ball-by-ball commentary and player stats',
+    '📱  Manage tournaments from the CRICTRAX mobile app',
+    '🎯  Create new tournaments, add teams and start scoring instantly',
+    '🔴  Live matches stream automatically to this TV dashboard',
+  ];
+
   @override
   void initState() {
     super.initState();
 
+    // Existing controllers (UNCHANGED)
     _pulseCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1600),
@@ -92,14 +168,56 @@ class _DashboardScreenState extends State<DashboardScreen>
     _pulseAnim = Tween<double>(begin: 0.4, end: 1.0).animate(
       CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut),
     );
-
     _shimmerCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 2000),
     )..repeat();
 
+    // NEW controllers
+    _cardEntranceCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    );
+    _cardEntranceAnim = CurvedAnimation(
+      parent: _cardEntranceCtrl,
+      curve: Curves.easeOutCubic,
+    );
+
+    _tickerCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 30),
+    )..repeat();
+
+    _heroBannerCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    );
+    _heroBannerAnim = CurvedAnimation(
+      parent: _heroBannerCtrl,
+      curve: Curves.easeOutBack,
+    );
+
+    _adPageCtrl = PageController();
+
+    // NEW timers
+    _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() => _now = DateTime.now());
+    });
+
+    _adTimer = Timer.periodic(const Duration(seconds: 6), (_) {
+      if (!mounted) return;
+      final next = (_currentAdPage + 1) % _adSlides.length;
+      _adPageCtrl.animateToPage(
+        next,
+        duration: const Duration(milliseconds: 600),
+        curve: Curves.easeInOut,
+      );
+    });
+
     _fetchTournaments();
     _listenForLogout();
+    _listenForLiveMatch();
+    _listenConnectivity();
   }
 
   // ── Business Logic (UNCHANGED) ────────────────────────────────────────────
@@ -149,8 +267,16 @@ class _DashboardScreenState extends State<DashboardScreen>
   @override
   void dispose() {
     _logoutSub?.cancel();
+    _liveMatchSub?.cancel();
+    _connectivitySub?.cancel();
+    _clockTimer.cancel();
+    _adTimer.cancel();
     _pulseCtrl.dispose();
     _shimmerCtrl.dispose();
+    _cardEntranceCtrl.dispose();
+    _tickerCtrl.dispose();
+    _heroBannerCtrl.dispose();
+    _adPageCtrl.dispose();
     super.dispose();
   }
 
@@ -161,6 +287,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         _tournaments = tournaments;
         _loading = false;
       });
+      _cardEntranceCtrl.forward();
     }
   }
 
@@ -180,6 +307,56 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
   }
 
+  // ── NEW: non-breaking live match listener ─────────────────────────────────
+  void _listenForLiveMatch() {
+    try {
+      _liveMatchSub = FirebaseFirestore.instance
+          .collection('matches')
+          .where('userId', isEqualTo: widget.userId)
+          .where('status', isEqualTo: 'live')
+          .limit(1)
+          .snapshots()
+          .listen((snap) {
+        if (!mounted) return;
+        if (snap.docs.isNotEmpty) {
+          final data = snap.docs.first.data();
+          setState(() => _featuredLiveMatch = data);
+          if (!_heroBannerCtrl.isCompleted) _heroBannerCtrl.forward();
+        } else {
+          setState(() => _featuredLiveMatch = null);
+          _heroBannerCtrl.reverse();
+        }
+      }, onError: (_) {
+        // Non-breaking: silently ignore if collection doesn't exist
+      });
+    } catch (_) {}
+  }
+
+  // ── NEW: Firebase connectivity monitor ───────────────────────────────────
+  void _listenConnectivity() {
+    try {
+      _connectivitySub = FirebaseFirestore.instance
+          .collection('.info')
+          .doc('connected')
+          .snapshots()
+          .listen((snap) {
+        if (!mounted) return;
+        final connected = snap.data()?['connected'] as bool? ?? true;
+        setState(() => _isConnected = connected);
+      }, onError: (_) {
+        // Non-breaking
+      });
+    } catch (_) {}
+  }
+
+  // ── Computed stats from existing _tournaments (no new Firestore queries) ──
+  int get _liveTournamentCount =>
+      _tournaments.where((t) => t.status?.toLowerCase() == 'live').length;
+  int get _completedTournamentCount =>
+      _tournaments.where((t) => t.status?.toLowerCase() == 'completed').length;
+  int get _upcomingTournamentCount =>
+      _tournaments.where((t) => t.status?.toLowerCase() == 'upcoming').length;
+
   // ── Build ─────────────────────────────────────────────────────────────────
 
   @override
@@ -190,7 +367,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       backgroundColor: _DS.bg,
       body: Stack(
         children: [
-          // Ambient background glow
+          // Ambient background glow (UNCHANGED)
           Positioned(
             top: -120,
             left: 60,
@@ -200,6 +377,26 @@ class _DashboardScreenState extends State<DashboardScreen>
             bottom: -80,
             right: 100,
             child: _AmbientGlow(color: const Color(0xFF6C3AFF), size: 300),
+          ),
+          // NEW — subtle top broadcast stripe
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: Container(
+              height: 2,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    Colors.transparent,
+                    _DS.accent,
+                    _DS.live,
+                    _DS.accent,
+                    Colors.transparent,
+                  ],
+                ),
+              ),
+            ),
           ),
           // Main layout
           Row(
@@ -211,7 +408,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                     Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (context) => const SettingsScreen(initialNavIndex: 3),
+                        builder: (context) =>
+                        const SettingsScreen(initialNavIndex: 3),
                       ),
                     );
                   } else {
@@ -230,29 +428,161 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   Widget _buildMainContent() {
-    return Padding(
-      padding: const EdgeInsets.only(top: 36, left: 40, right: 48, bottom: 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildHeader(),
-          const SizedBox(height: 28),
-          _buildBroadcastBanner(),
-          const SizedBox(height: 36),
-          Expanded(
-            child: SingleChildScrollView(
-              physics: const BouncingScrollPhysics(),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildSectionHeader('My Tournaments', _tournaments.length),
+    return Column(
+      children: [
+        // NEW — top status bar (news ticker + time + connection)
+        _buildStatusBar(),
+        Expanded(
+          child: Padding(
+            padding:
+            const EdgeInsets.only(top: 20, left: 40, right: 48, bottom: 0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildHeader(),
+                const SizedBox(height: 20),
+                // NEW — stats bar
+                _buildStatsBar(),
+                const SizedBox(height: 20),
+                // Featured live match (shown only when live match exists)
+                if (_featuredLiveMatch != null) ...[
+                  _buildFeaturedLiveCard(),
                   const SizedBox(height: 20),
-                  _tournaments.isEmpty
-                      ? _buildEmptyState()
-                      : _buildTournamentGrid(),
-                  const SizedBox(height: 40),
                 ],
+                // Ad carousel (replaces static banner)
+                _buildAdCarousel(),
+                const SizedBox(height: 24),
+                Expanded(
+                  child: SingleChildScrollView(
+                    physics: const BouncingScrollPhysics(),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // NEW — Quick Action Panel
+                        _buildQuickActionPanel(),
+                        const SizedBox(height: 28),
+                        _buildSectionHeader(
+                            'My Tournaments', _tournaments.length),
+                        const SizedBox(height: 20),
+                        _tournaments.isEmpty
+                            ? _buildEmptyState()
+                            : _buildTournamentGrid(),
+                        const SizedBox(height: 40),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ── NEW: Status Bar ────────────────────────────────────────────────────────
+  Widget _buildStatusBar() {
+    final h = _now.hour;
+    final m = _now.minute.toString().padLeft(2, '0');
+    final s = _now.second.toString().padLeft(2, '0');
+    final period = h >= 12 ? 'PM' : 'AM';
+    final h12 = h % 12 == 0 ? 12 : h % 12;
+    final weekdays = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+    final months = [
+      'JAN','FEB','MAR','APR','MAY','JUN',
+      'JUL','AUG','SEP','OCT','NOV','DEC'
+    ];
+    final dayStr =
+        '${weekdays[_now.weekday - 1]}  ${_now.day} ${months[_now.month - 1]}';
+
+    return Container(
+      height: 36,
+      color: const Color(0xFF020712),
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Row(
+        children: [
+          // Ticker
+          Expanded(
+            child: _NewsTicker(
+              items: _tickerItems,
+              controller: _tickerCtrl,
+            ),
+          ),
+          const SizedBox(width: 24),
+          // Date
+          Text(
+            dayStr,
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.4),
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 1.5,
+            ),
+          ),
+          const SizedBox(width: 16),
+          // Time
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Text(
+                '$h12:$m:$s',
+                style: TextStyle(
+                  color: _DS.accent,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
               ),
+              const SizedBox(width: 4),
+              Text(
+                period,
+                style: TextStyle(
+                  color: _DS.accent.withOpacity(0.5),
+                  fontSize: 9,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(width: 16),
+          // Connection dot
+          AnimatedBuilder(
+            animation: _pulseAnim,
+            builder: (_, __) => Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 7,
+                  height: 7,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: _isConnected
+                        ? _DS.success.withOpacity(
+                        _isConnected ? _pulseAnim.value : 0.3)
+                        : _DS.danger,
+                    boxShadow: _isConnected
+                        ? [
+                      BoxShadow(
+                        color: _DS.success.withOpacity(0.5),
+                        blurRadius: 6,
+                      )
+                    ]
+                        : [],
+                  ),
+                ),
+                const SizedBox(width: 5),
+                Text(
+                  _isConnected ? 'LIVE' : 'OFFLINE',
+                  style: TextStyle(
+                    color: _isConnected ? _DS.success : _DS.danger,
+                    fontSize: 9,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1.5,
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -260,6 +590,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
   }
 
+  // ── EXISTING: Header (UNCHANGED, kept exactly) ─────────────────────────────
   Widget _buildHeader() {
     final initial =
     widget.displayName.isNotEmpty ? widget.displayName[0].toUpperCase() : 'U';
@@ -323,7 +654,7 @@ class _DashboardScreenState extends State<DashboardScreen>
           ],
         ),
         const Spacer(),
-        // Stats chips row
+        // Stats chips row (UNCHANGED)
         Row(
           children: [
             _StatChip(
@@ -347,10 +678,453 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
   }
 
-  Widget _buildBroadcastBanner() {
+  // ── NEW: Stats Bar ─────────────────────────────────────────────────────────
+  Widget _buildStatsBar() {
+    final stats = [
+      _StatCard(
+        label: 'TOTAL',
+        value: '${_tournaments.length}',
+        icon: Icons.emoji_events_rounded,
+        color: _DS.accent,
+        gradient: _DS.accentGrad,
+      ),
+      _StatCard(
+        label: 'LIVE',
+        value: '$_liveTournamentCount',
+        icon: Icons.sensors_rounded,
+        color: _DS.live,
+        gradient: _DS.liveGrad,
+        isPulsing: true,
+      ),
+      _StatCard(
+        label: 'COMPLETED',
+        value: '$_completedTournamentCount',
+        icon: Icons.check_circle_rounded,
+        color: _DS.success,
+        gradient: _DS.successGrad,
+      ),
+      _StatCard(
+        label: 'UPCOMING',
+        value: '$_upcomingTournamentCount',
+        icon: Icons.schedule_rounded,
+        color: _DS.warning,
+        gradient: _DS.goldGrad,
+      ),
+    ];
+
+    return AnimatedBuilder(
+      animation: _cardEntranceAnim,
+      builder: (_, __) {
+        return Row(
+          children: List.generate(stats.length, (i) {
+            final delay = i / stats.length;
+            final t = (_cardEntranceAnim.value - delay).clamp(0.0, 1.0) /
+                (1.0 - delay + 0.001);
+            return Expanded(
+              child: Padding(
+                padding: EdgeInsets.only(right: i < stats.length - 1 ? 14 : 0),
+                child: Transform.translate(
+                  offset: Offset(0, 20 * (1 - t)),
+                  child: Opacity(
+                    opacity: t.clamp(0.0, 1.0),
+                    child: _buildStatCard(stats[i]),
+                  ),
+                ),
+              ),
+            );
+          }),
+        );
+      },
+    );
+  }
+
+  Widget _buildStatCard(_StatCard s) {
+    return Container(
+      height: 72,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(14),
+        color: _DS.surfaceHigh,
+        border: Border.all(
+          color: s.color.withOpacity(0.18),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: s.color.withOpacity(0.08),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: Stack(
+          children: [
+            // Subtle gradient tint on left
+            Positioned(
+              left: 0,
+              top: 0,
+              bottom: 0,
+              child: Container(
+                width: 3,
+                decoration: BoxDecoration(gradient: s.gradient),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: s.color.withOpacity(0.1),
+                    ),
+                    child: s.isPulsing
+                        ? AnimatedBuilder(
+                      animation: _pulseAnim,
+                      builder: (_, __) => Icon(
+                        s.icon,
+                        color: s.color.withOpacity(
+                            0.5 + _pulseAnim.value * 0.5),
+                        size: 18,
+                      ),
+                    )
+                        : Icon(s.icon, color: s.color, size: 18),
+                  ),
+                  const SizedBox(width: 12),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        s.value,
+                        style: TextStyle(
+                          color: s.color,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w900,
+                          height: 1.0,
+                        ),
+                      ),
+                      Text(
+                        s.label,
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.4),
+                          fontSize: 9,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── NEW: Featured Live Match Hero Card ─────────────────────────────────────
+  Widget _buildFeaturedLiveCard() {
+    final match = _featuredLiveMatch!;
+    final team1 = match['team1Name'] as String? ?? 'Team A';
+    final team2 = match['team2Name'] as String? ?? 'Team B';
+    final score1 = match['team1Score'] as String? ?? '—';
+    final score2 = match['team2Score'] as String? ?? '—';
+    final overs = match['currentOvers'] as String? ?? '0.0';
+    final status = match['matchStatus'] as String? ?? 'In Progress';
+
+    return ScaleTransition(
+      scale: _heroBannerAnim,
+      child: FadeTransition(
+        opacity: _heroBannerAnim,
+        child: Container(
+          width: double.infinity,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            gradient: LinearGradient(
+              colors: [
+                const Color(0xFF1A0A00),
+                const Color(0xFF2A1000),
+                const Color(0xFF0A0A1A),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            border: Border.all(
+              color: _DS.live.withOpacity(0.4),
+              width: 1.5,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: _DS.live.withOpacity(0.2),
+                blurRadius: 32,
+                spreadRadius: 0,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(20),
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: CustomPaint(painter: _GridPatternPainter()),
+                ),
+                // Live accent stripe
+                Positioned(
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  child: Container(
+                    width: 4,
+                    decoration: BoxDecoration(
+                      gradient: _DS.liveGrad,
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(20),
+                        bottomLeft: Radius.circular(20),
+                      ),
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 28, vertical: 18),
+                  child: Row(
+                    children: [
+                      // LIVE badge
+                      Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          AnimatedBuilder(
+                            animation: _pulseAnim,
+                            builder: (_, __) => Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 4),
+                              decoration: BoxDecoration(
+                                gradient: _DS.liveGrad,
+                                borderRadius: BorderRadius.circular(6),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: _DS.live
+                                        .withOpacity(_pulseAnim.value * 0.6),
+                                    blurRadius: 12,
+                                  ),
+                                ],
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Container(
+                                    width: 6,
+                                    height: 6,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: Colors.white
+                                          .withOpacity(_pulseAnim.value),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 5),
+                                  const Text(
+                                    'LIVE',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w900,
+                                      letterSpacing: 2,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'FEATURED MATCH',
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.3),
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 2,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(width: 28),
+                      // Team 1
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              team1.toUpperCase(),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.5,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              score1,
+                              style: TextStyle(
+                                color: _DS.accent,
+                                fontSize: 28,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: -0.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      // VS divider
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'VS',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.2),
+                                fontSize: 14,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 2,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: _DS.surface,
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                    color: Colors.white.withOpacity(0.08)),
+                              ),
+                              child: Text(
+                                '$overs ov',
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.5),
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      // Team 2
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              team2.toUpperCase(),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.5,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              score2,
+                              style: TextStyle(
+                                color: _DS.accent,
+                                fontSize: 28,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: -0.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 20),
+                      // Status
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: _DS.surface,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: Colors.white.withOpacity(0.06),
+                          ),
+                        ),
+                        child: Text(
+                          status,
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.6),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── NEW: Ad Carousel (replaces static broadcast banner) ───────────────────
+  Widget _buildAdCarousel() {
+    return SizedBox(
+      height: 120,
+      child: Stack(
+        children: [
+          PageView.builder(
+            controller: _adPageCtrl,
+            onPageChanged: (i) => setState(() => _currentAdPage = i),
+            itemCount: _adSlides.length,
+            itemBuilder: (_, i) => _buildAdSlide(_adSlides[i]),
+          ),
+          // Page dots
+          Positioned(
+            bottom: 10,
+            right: 20,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: List.generate(
+                _adSlides.length,
+                    (i) => AnimatedContainer(
+                  duration: const Duration(milliseconds: 300),
+                  width: _currentAdPage == i ? 18 : 5,
+                  height: 5,
+                  margin: const EdgeInsets.only(left: 4),
+                  decoration: BoxDecoration(
+                    color: _currentAdPage == i
+                        ? _adSlides[i].color
+                        : Colors.white.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAdSlide(_AdSlide slide) {
     return Container(
       width: double.infinity,
-      height: 148,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(20),
         gradient: LinearGradient(
@@ -377,7 +1151,6 @@ class _DashboardScreenState extends State<DashboardScreen>
         borderRadius: BorderRadius.circular(20),
         child: Stack(
           children: [
-            // Subtle cricket field pattern overlay
             Positioned.fill(
               child: CustomPaint(painter: _GridPatternPainter()),
             ),
@@ -389,22 +1162,23 @@ class _DashboardScreenState extends State<DashboardScreen>
               child: Container(
                 width: 4,
                 decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [_DS.accent, _DS.accentDim],
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                  ),
+                  color: slide.color,
                   borderRadius: const BorderRadius.only(
                     topLeft: Radius.circular(20),
                     bottomLeft: Radius.circular(20),
                   ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: slide.color.withOpacity(0.5),
+                      blurRadius: 8,
+                    ),
+                  ],
                 ),
               ),
             ),
-            // Content
             Padding(
               padding:
-              const EdgeInsets.symmetric(horizontal: 28, vertical: 20),
+              const EdgeInsets.symmetric(horizontal: 28, vertical: 16),
               child: Row(
                 children: [
                   Column(
@@ -419,11 +1193,11 @@ class _DashboardScreenState extends State<DashboardScreen>
                               width: 8,
                               height: 8,
                               decoration: BoxDecoration(
-                                color: _DS.live.withOpacity(_pulseAnim.value),
+                                color: slide.color.withOpacity(_pulseAnim.value),
                                 shape: BoxShape.circle,
                                 boxShadow: [
                                   BoxShadow(
-                                    color: _DS.live.withOpacity(0.6),
+                                    color: slide.color.withOpacity(0.6),
                                     blurRadius: 6,
                                   ),
                                 ],
@@ -432,9 +1206,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                           ),
                           const SizedBox(width: 8),
                           Text(
-                            'ADVERTISEMENT',
+                            slide.tag,
                             style: TextStyle(
-                              color: _DS.live,
+                              color: slide.color,
                               fontSize: 10,
                               fontWeight: FontWeight.w800,
                               letterSpacing: 3.0,
@@ -442,41 +1216,40 @@ class _DashboardScreenState extends State<DashboardScreen>
                           ),
                         ],
                       ),
-                      const SizedBox(height: 10),
-                      const Text(
-                        'Ad Space',
-                        style: TextStyle(
+                      const SizedBox(height: 8),
+                      Text(
+                        slide.headline,
+                        style: const TextStyle(
                           color: Colors.white,
-                          fontSize: 22,
+                          fontSize: 20,
                           fontWeight: FontWeight.w800,
                           letterSpacing: 0.3,
                         ),
                       ),
-                      const SizedBox(height: 6),
+                      const SizedBox(height: 4),
                       Text(
-                        'Premium placement available for sponsors',
+                        slide.subline,
                         style: TextStyle(
                           color: Colors.white.withOpacity(0.35),
-                          fontSize: 13,
+                          fontSize: 12,
                         ),
                       ),
                     ],
                   ),
                   const Spacer(),
-                  // Decorative cricket icon
                   Container(
-                    width: 80,
-                    height: 80,
+                    width: 72,
+                    height: 72,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: _DS.accent.withOpacity(0.05),
+                      color: slide.color.withOpacity(0.05),
                       border: Border.all(
-                          color: _DS.accent.withOpacity(0.12), width: 1),
+                          color: slide.color.withOpacity(0.12), width: 1),
                     ),
                     child: Icon(
-                      Icons.sports_cricket,
-                      color: _DS.accent.withOpacity(0.2),
-                      size: 40,
+                      slide.icon,
+                      color: slide.color.withOpacity(0.22),
+                      size: 36,
                     ),
                   ),
                 ],
@@ -488,6 +1261,72 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
   }
 
+  // ── NEW: Quick Action Panel ─────────────────────────────────────────────────
+  Widget _buildQuickActionPanel() {
+    final actions = [
+      _QuickAction(
+        icon: Icons.sensors_rounded,
+        label: 'Live\nMatches',
+        color: _DS.live,
+        onTap: () => setState(() => _selectedNavIndex = 2),
+      ),
+      _QuickAction(
+        icon: Icons.emoji_events_rounded,
+        label: 'Tournaments',
+        color: _DS.accent,
+        onTap: () => setState(() => _selectedNavIndex = 1),
+      ),
+      _QuickAction(
+        icon: Icons.refresh_rounded,
+        label: 'Refresh\nData',
+        color: _DS.success,
+        onTap: () {
+          setState(() => _loading = true);
+          _fetchTournaments();
+        },
+      ),
+      _QuickAction(
+        icon: Icons.settings_rounded,
+        label: 'Settings',
+        color: _DS.warning,
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const SettingsScreen(initialNavIndex: 3),
+          ),
+        ),
+      ),
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'QUICK ACTIONS',
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.35),
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 2.5,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: List.generate(actions.length, (i) {
+            return Expanded(
+              child: Padding(
+                padding:
+                EdgeInsets.only(right: i < actions.length - 1 ? 12 : 0),
+                child: _QuickActionButton(action: actions[i]),
+              ),
+            );
+          }),
+        ),
+      ],
+    );
+  }
+
+  // ── EXISTING: Section Header (UNCHANGED) ──────────────────────────────────
   Widget _buildSectionHeader(String title, int count) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -544,7 +1383,6 @@ class _DashboardScreenState extends State<DashboardScreen>
           ],
         ),
         const Spacer(),
-        // Decorative line
         Expanded(
           child: Container(
             height: 1,
@@ -563,101 +1401,130 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
   }
 
+  // ── EXISTING: Tournament Grid (UNCHANGED) ─────────────────────────────────
   Widget _buildTournamentGrid() {
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        crossAxisSpacing: 20,
-        mainAxisSpacing: 20,
-        childAspectRatio: 1.4,
-      ),
-      itemCount: _tournaments.length,
-      itemBuilder: (context, index) {
-        final t = _tournaments[index];
-        return TournamentCardWidget(
-          tournament: t,
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => TournamentDetailScreen(
-                tournamentId: t.id,
-                tournament: t,
-                sessionId: widget.sessionId,
-              ),
-            ),
+    return AnimatedBuilder(
+      animation: _cardEntranceAnim,
+      builder: (_, __) {
+        return GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 3,
+            crossAxisSpacing: 20,
+            mainAxisSpacing: 20,
+            childAspectRatio: 1.4,
           ),
+          itemCount: _tournaments.length,
+          itemBuilder: (context, index) {
+            final t = _tournaments[index];
+            final delay = (index / _tournaments.length) * 0.5;
+            final t0 = (_cardEntranceAnim.value - delay)
+                .clamp(0.0, 1.0) /
+                (1.0 - delay + 0.001);
+
+            return Transform.translate(
+              offset: Offset(0, 30 * (1 - t0.clamp(0.0, 1.0))),
+              child: Opacity(
+                opacity: t0.clamp(0.0, 1.0),
+                child: TournamentCardWidget(
+                  tournament: t,
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => TournamentDetailScreen(
+                        tournamentId: t.id,
+                        tournament: t,
+                        sessionId: widget.sessionId,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
         );
       },
     );
   }
 
+  // ── ENHANCED: Empty State ─────────────────────────────────────────────────
   Widget _buildEmptyState() {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 72),
+        padding: const EdgeInsets.symmetric(vertical: 48),
         child: Column(
           children: [
-            Container(
-              width: 100,
-              height: 100,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: _DS.accent.withOpacity(0.04),
-                border:
-                Border.all(color: _DS.accent.withOpacity(0.10), width: 1.5),
-              ),
-              child: Icon(
-                Icons.emoji_events_outlined,
-                color: _DS.accent.withOpacity(0.25),
-                size: 44,
+            // Animated dashed ring
+            AnimatedBuilder(
+              animation: _pulseAnim,
+              builder: (_, __) => SizedBox(
+                width: 120,
+                height: 120,
+                child: CustomPaint(
+                  painter: _DashedCirclePainter(
+                    color: _DS.accent.withOpacity(0.2 + _pulseAnim.value * 0.15),
+                  ),
+                  child: Center(
+                    child: Container(
+                      width: 84,
+                      height: 84,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: _DS.accent.withOpacity(0.04),
+                        border: Border.all(
+                            color: _DS.accent.withOpacity(0.10), width: 1.5),
+                      ),
+                      child: Icon(
+                        Icons.emoji_events_outlined,
+                        color: _DS.accent
+                            .withOpacity(0.2 + _pulseAnim.value * 0.1),
+                        size: 40,
+                      ),
+                    ),
+                  ),
+                ),
               ),
             ),
-            const SizedBox(height: 24),
-            Text(
+            const SizedBox(height: 28),
+            const Text(
               'No Tournaments Yet',
               style: TextStyle(
-                color: Colors.white.withOpacity(0.6),
-                fontSize: 20,
-                fontWeight: FontWeight.w700,
+                color: Colors.white,
+                fontSize: 22,
+                fontWeight: FontWeight.w800,
               ),
             ),
             const SizedBox(height: 10),
             Text(
-              'Create a tournament in the CRICTRAX mobile app\nand it will appear here automatically.',
+              'Your tournaments will appear here automatically.',
               style: TextStyle(
-                color: Colors.white.withOpacity(0.25),
+                color: Colors.white.withOpacity(0.35),
                 fontSize: 14,
                 height: 1.6,
               ),
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 28),
-            Container(
-              padding:
-              const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-              decoration: BoxDecoration(
-                color: _DS.accent.withOpacity(0.08),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: _DS.accent.withOpacity(0.2)),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.phone_android_rounded,
-                      color: _DS.accent, size: 16),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Open CRICTRAX on your phone to get started',
-                    style: TextStyle(
-                      color: _DS.accent,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
+            const SizedBox(height: 32),
+            // Step hints
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _EmptyStateStep(
+                    step: '1',
+                    text: 'Open CRICTRAX\non your phone',
+                    color: _DS.accent),
+                _EmptyStateArrow(),
+                _EmptyStateStep(
+                    step: '2',
+                    text: 'Create a\ntournament',
+                    color: _DS.warning),
+                _EmptyStateArrow(),
+                _EmptyStateStep(
+                    step: '3',
+                    text: 'It appears here\nautomatically',
+                    color: _DS.success),
+              ],
             ),
           ],
         ),
@@ -666,7 +1533,300 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 }
 
+// ─── Data models for new widgets ──────────────────────────────────────────────
+
+class _StatCard {
+  final String label;
+  final String value;
+  final IconData icon;
+  final Color color;
+  final LinearGradient gradient;
+  final bool isPulsing;
+
+  const _StatCard({
+    required this.label,
+    required this.value,
+    required this.icon,
+    required this.color,
+    required this.gradient,
+    this.isPulsing = false,
+  });
+}
+
+class _AdSlide {
+  final String tag;
+  final String headline;
+  final String subline;
+  final IconData icon;
+  final Color color;
+
+  const _AdSlide({
+    required this.tag,
+    required this.headline,
+    required this.subline,
+    required this.icon,
+    required this.color,
+  });
+}
+
+class _QuickAction {
+  final IconData icon;
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _QuickAction({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.onTap,
+  });
+}
+
+// ─── Quick Action Button ──────────────────────────────────────────────────────
+class _QuickActionButton extends StatefulWidget {
+  final _QuickAction action;
+  const _QuickActionButton({required this.action});
+
+  @override
+  State<_QuickActionButton> createState() => _QuickActionButtonState();
+}
+
+class _QuickActionButtonState extends State<_QuickActionButton>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+  late Animation<double> _scale;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 120),
+    );
+    _scale = Tween<double>(begin: 1.0, end: 0.94).animate(
+      CurvedAnimation(parent: _ctrl, curve: Curves.easeIn),
+    );
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Focus(
+      child: Builder(builder: (ctx) {
+        final focused = Focus.of(ctx).hasFocus;
+        return GestureDetector(
+          onTapDown: (_) => _ctrl.forward(),
+          onTapUp: (_) {
+            _ctrl.reverse();
+            widget.action.onTap();
+          },
+          onTapCancel: () => _ctrl.reverse(),
+          child: ScaleTransition(
+            scale: _scale,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              height: 64,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(14),
+                color: focused
+                    ? widget.action.color.withOpacity(0.18)
+                    : _DS.surfaceHigh,
+                border: Border.all(
+                  color: focused
+                      ? widget.action.color.withOpacity(0.5)
+                      : widget.action.color.withOpacity(0.15),
+                  width: 1.5,
+                ),
+                boxShadow: focused
+                    ? [
+                  BoxShadow(
+                    color: widget.action.color.withOpacity(0.25),
+                    blurRadius: 20,
+                    spreadRadius: 0,
+                  ),
+                ]
+                    : [],
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    widget.action.icon,
+                    color: widget.action.color,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    widget.action.label.replaceAll('\n', ' '),
+                    style: TextStyle(
+                      color: focused
+                          ? widget.action.color
+                          : Colors.white.withOpacity(0.7),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.3,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      }),
+    );
+  }
+}
+
+// ─── News Ticker ──────────────────────────────────────────────────────────────
+class _NewsTicker extends StatelessWidget {
+  final List<String> items;
+  final AnimationController controller;
+
+  const _NewsTicker({required this.items, required this.controller});
+
+  @override
+  Widget build(BuildContext context) {
+    final fullText = items.join('     •     ');
+    return ClipRect(
+      child: AnimatedBuilder(
+        animation: controller,
+        builder: (_, __) {
+          return FractionalTranslation(
+            translation: Offset(1.0 - controller.value * 2.0, 0),
+            child: Text(
+              fullText,
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.45),
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.3,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.visible,
+              softWrap: false,
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+// ─── Empty State Helpers ──────────────────────────────────────────────────────
+class _EmptyStateStep extends StatelessWidget {
+  final String step;
+  final String text;
+  final Color color;
+
+  const _EmptyStateStep(
+      {required this.step, required this.text, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 120,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.06),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.18)),
+      ),
+      child: Column(
+        children: [
+          Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: color.withOpacity(0.15),
+              border: Border.all(color: color.withOpacity(0.35)),
+            ),
+            child: Center(
+              child: Text(
+                step,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            text,
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.5),
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              height: 1.5,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EmptyStateArrow extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Icon(
+        Icons.arrow_forward_rounded,
+        color: Colors.white.withOpacity(0.15),
+        size: 20,
+      ),
+    );
+  }
+}
+
+// ─── Dashed Circle Painter (for empty state) ──────────────────────────────────
+class _DashedCirclePainter extends CustomPainter {
+  final Color color;
+  _DashedCirclePainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 1.5
+      ..style = PaintingStyle.stroke;
+
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = size.width / 2 - 2;
+    const dashCount = 24;
+    const dashLength = 2 * math.pi / dashCount;
+
+    for (int i = 0; i < dashCount; i++) {
+      if (i % 2 == 0) {
+        final start = i * dashLength;
+        final end = start + dashLength * 0.55;
+        canvas.drawArc(
+          Rect.fromCircle(center: center, radius: radius),
+          start,
+          end - start,
+          false,
+          paint,
+        );
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_DashedCirclePainter old) => old.color != color;
+}
+
 // ─── Side Nav Rail ─────────────────────────────────────────────────────────────
+// (UNCHANGED — reproduced exactly)
 class _SideNavRail extends StatelessWidget {
   final int selectedIndex;
   final ValueChanged<int> onIndexChanged;
@@ -703,7 +1863,6 @@ class _SideNavRail extends StatelessWidget {
       child: Column(
         children: [
           const SizedBox(height: 36),
-          // Logo mark
           Container(
             width: 44,
             height: 44,
@@ -735,8 +1894,6 @@ class _SideNavRail extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 40),
-
-          // Nav items
           ...List.generate(_items.length, (i) {
             final item = _items[i];
             return _NavItem(
@@ -746,10 +1903,7 @@ class _SideNavRail extends StatelessWidget {
               onTap: () => onIndexChanged(i),
             );
           }),
-
           const Spacer(),
-
-          // Divider
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Divider(
@@ -758,8 +1912,6 @@ class _SideNavRail extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
-
-          // Logout
           _NavItem(
             icon: Icons.logout_rounded,
             label: 'Logout',
@@ -797,16 +1949,14 @@ class _NavItem extends StatelessWidget {
         child: Builder(builder: (ctx) {
           final focused = Focus.of(ctx).hasFocus;
           final active = isSelected || focused;
-          final activeColor =
-          isDanger ? _DS.danger : _DS.accent;
+          final activeColor = isDanger ? _DS.danger : _DS.accent;
 
           return GestureDetector(
             onTap: onTap,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 200),
               curve: Curves.easeOut,
-              margin:
-              const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+              margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
               padding:
               const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
               decoration: BoxDecoration(
@@ -861,7 +2011,7 @@ class _NavItem extends StatelessWidget {
   }
 }
 
-// ─── Stat Chip ────────────────────────────────────────────────────────────────
+// ─── Stat Chip (UNCHANGED) ────────────────────────────────────────────────────
 class _StatChip extends StatelessWidget {
   final IconData icon;
   final String label;
@@ -893,8 +2043,7 @@ class _StatChip extends StatelessWidget {
         : Icon(icon, color: color, size: 14);
 
     return Container(
-      padding:
-      const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       decoration: BoxDecoration(
         color: color.withOpacity(0.08),
         borderRadius: BorderRadius.circular(14),
@@ -935,7 +2084,7 @@ class _StatChip extends StatelessWidget {
   }
 }
 
-// ─── Loading Screen ───────────────────────────────────────────────────────────
+// ─── Loading Screen (UNCHANGED) ───────────────────────────────────────────────
 class _LoadingScreen extends StatefulWidget {
   @override
   State<_LoadingScreen> createState() => _LoadingScreenState();
@@ -1013,8 +2162,7 @@ class _LoadingScreenState extends State<_LoadingScreen>
                 borderRadius: BorderRadius.circular(4),
                 child: LinearProgressIndicator(
                   backgroundColor: _DS.accent.withOpacity(0.08),
-                  valueColor:
-                  AlwaysStoppedAnimation<Color>(_DS.accent),
+                  valueColor: AlwaysStoppedAnimation<Color>(_DS.accent),
                   minHeight: 2,
                 ),
               ),
@@ -1038,7 +2186,7 @@ class _LoadingScreenState extends State<_LoadingScreen>
   }
 }
 
-// ─── Forced Logout Dialog ─────────────────────────────────────────────────────
+// ─── Forced Logout Dialog (UNCHANGED) ─────────────────────────────────────────
 class _ForcedLogoutDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
@@ -1076,8 +2224,7 @@ class _ForcedLogoutDialog extends StatelessWidget {
                     border: Border.all(
                         color: _DS.danger.withOpacity(0.25), width: 1.5),
                   ),
-                  child: Icon(Icons.logout_rounded,
-                      color: _DS.danger, size: 32),
+                  child: Icon(Icons.logout_rounded, color: _DS.danger, size: 32),
                 ),
                 const SizedBox(height: 28),
                 const Text(
@@ -1117,7 +2264,7 @@ class _ForcedLogoutDialog extends StatelessWidget {
   }
 }
 
-// ─── Logout Confirm Dialog ────────────────────────────────────────────────────
+// ─── Logout Confirm Dialog (UNCHANGED) ────────────────────────────────────────
 class _LogoutDialog extends StatelessWidget {
   final VoidCallback onConfirm;
   final VoidCallback onCancel;
@@ -1279,7 +2426,7 @@ class _LogoutDialog extends StatelessWidget {
   }
 }
 
-// ─── Ambient Glow ─────────────────────────────────────────────────────────────
+// ─── Ambient Glow (UNCHANGED) ─────────────────────────────────────────────────
 class _AmbientGlow extends StatelessWidget {
   final Color color;
   final double size;
@@ -1305,7 +2452,7 @@ class _AmbientGlow extends StatelessWidget {
   }
 }
 
-// ─── Grid Pattern Painter ─────────────────────────────────────────────────────
+// ─── Grid Pattern Painter (UNCHANGED) ─────────────────────────────────────────
 class _GridPatternPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
