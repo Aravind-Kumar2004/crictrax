@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'package:flutter/physics.dart';
+
 import 'widgets/ad_banner_widget.dart';
 import 'dart:ui';
 import 'package:flutter/material.dart';
@@ -58,6 +60,73 @@ class _DS {
   );
 }
 
+// ─── Silk Scroll Behavior ─────────────────────────────────────────────────────
+// Removes scrollbar overlay (repaints every frame) and overscroll glow
+class _SilkScrollBehavior extends ScrollBehavior {
+  @override
+  Widget buildOverscrollIndicator(
+    BuildContext context,
+    Widget child,
+    ScrollableDetails details,
+  ) => child; // no glow
+
+  @override
+  Widget buildScrollbar(
+    BuildContext context,
+    Widget child,
+    ScrollableDetails details,
+  ) => child; // no scrollbar repaint layer
+
+  @override
+  ScrollPhysics getScrollPhysics(BuildContext context) =>
+      const _SilkScrollPhysics();
+}
+
+// ─── Silk Scroll Physics ──────────────────────────────────────────────────────
+// Crisp response + fast smooth deceleration — no spring bounce
+class _SilkScrollPhysics extends ScrollPhysics {
+  const _SilkScrollPhysics({super.parent});
+
+  @override
+  _SilkScrollPhysics applyTo(ScrollPhysics? ancestor) =>
+      _SilkScrollPhysics(parent: buildParent(ancestor));
+
+  // How quickly velocity decays — higher = faster stop, snappier feel
+  @override
+  double get dragStartDistanceMotionThreshold => 1.0;
+
+  @override
+  Simulation? createBallisticSimulation(
+    ScrollMetrics position,
+    double velocity,
+  ) {
+    // Already at rest
+    if (velocity.abs() < 0.5) return null;
+
+    // Out of range — snap back with a tight spring
+    if ((velocity > 0 && position.pixels >= position.maxScrollExtent) ||
+        (velocity < 0 && position.pixels <= position.minScrollExtent)) {
+      return super.createBallisticSimulation(position, velocity);
+    }
+
+    // Friction simulation — feels like glass on silk
+    return FrictionSimulation(
+      0.12, // friction: lower = longer glide, 0.12 = royal smooth
+      position.pixels,
+      velocity * 0.91, // slight velocity damping for elegance
+    );
+  }
+
+  @override
+  double applyPhysicsToUserOffset(ScrollMetrics position, double offset) {
+    // 1:1 finger-to-scroll mapping — zero lag on drag start
+    return offset;
+  }
+
+  @override
+  bool get allowImplicitScrolling => false;
+}
+
 // ─── Dashboard Screen ─────────────────────────────────────────────────────────
 class DashboardScreen extends StatefulWidget {
   final String userId;
@@ -87,9 +156,8 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   // Drives ad-banner collapse/fade on scroll
   final ScrollController _scrollCtrl = ScrollController();
-  double _adFade = 1.0; // 1.0 = fully visible, 0.0 = fully collapsed
-  static const double _adCollapseDistance =
-      160.0; // px of scroll to fully collapse
+  final _adFade = ValueNotifier<double>(1.0);
+  static const double _adCollapseDistance = 160.0;
 
   // Animation controllers
   late AnimationController _pulseCtrl;
@@ -174,15 +242,15 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   // Collapses + fades the ad banner as the user scrolls
-  void _onScroll() {
+void _onScroll() {
     final offset = _scrollCtrl.offset.clamp(0.0, _adCollapseDistance);
     final fade = 1.0 - (offset / _adCollapseDistance);
-    if ((fade - _adFade).abs() > 0.01) {
-      setState(() => _adFade = fade);
+    if ((fade - _adFade.value).abs() > 0.01) {
+      _adFade.value = fade;
     }
   }
 
-  @override
+@override
   void dispose() {
     _logoutSub?.cancel();
     _scrollCtrl.removeListener(_onScroll);
@@ -190,6 +258,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     _pulseCtrl.dispose();
     _shimmerCtrl.dispose();
     _waveCtrl.dispose();
+    _adFade.dispose();
     super.dispose();
   }
 
@@ -233,7 +302,7 @@ class _DashboardScreenState extends State<DashboardScreen>
           Row(
             children: [
               // Spacer that matches nav rail width — keeps bg off the nav
-              const SizedBox(width: _DS.navWidth),
+              const SizedBox(width: 0),
               Expanded(
                 child: Stack(
                   fit: StackFit.expand,
@@ -340,26 +409,41 @@ class _DashboardScreenState extends State<DashboardScreen>
   Widget _buildMainContent() {
     return Padding(
       padding: const EdgeInsets.only(top: 24, left: 40, right: 48, bottom: 24),
-      child: SingleChildScrollView(
-        controller: _scrollCtrl,
-        physics: const BouncingScrollPhysics(),
+      child: ScrollConfiguration(
+        behavior: _SilkScrollBehavior(),
+        child: SingleChildScrollView(
+          controller: _scrollCtrl,
+          physics: const _SilkScrollPhysics(),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Ad banner: collapses height + fades opacity on scroll
-            ClipRect(
-              child: Align(
-                alignment: Alignment.topCenter,
-                heightFactor: _adFade,
-                child: Opacity(opacity: _adFade, child: const AdBannerWidget()),
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ValueListenableBuilder<double>(
+                valueListenable: _adFade,
+                builder: (_, fade, __) => Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ClipRect(
+                      child: Align(
+                        alignment: Alignment.topCenter,
+                        heightFactor: fade,
+                        child: Opacity(
+                          opacity: fade,
+                          child: const AdBannerWidget(),
+                        ),
+                      ),
+                    ),
+                    SizedBox(height: 20 * fade),
+                  ],
+                ),
               ),
-            ),
-            SizedBox(height: 20 * _adFade),
-            _buildSectionHeader('My Tournaments', _tournaments.length),
-            const SizedBox(height: 20),
-            _tournaments.isEmpty ? _buildEmptyState() : _buildTournamentGrid(),
-            const SizedBox(height: 40),
-          ],
+_buildSectionHeader('My Tournaments', _tournaments.length),
+              const SizedBox(height: 28),
+              _tournaments.isEmpty
+                  ? _buildEmptyState()
+                  : _buildTournamentRows(),
+              const SizedBox(height: 40),
+            ],
+          ),
         ),
       ),
     );
@@ -880,35 +964,170 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
   }
 
-Widget _buildTournamentGrid() {
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 4,
-        crossAxisSpacing: 14,
-        mainAxisSpacing: 14,
-        childAspectRatio: 1.65,
-      ),
-      itemCount: _tournaments.length,
-      itemBuilder: (context, index) {
-        final t = _tournaments[index];
-        return _HoverPreviewCard(
-          tournament: t,
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => TournamentDetailScreen(
-                tournamentId: t.id,
-                tournament: t,
-                sessionId: widget.sessionId,
-              ),
-            ),
-          ),
-        );
-      },
+Widget _buildTournamentRows() {
+    final live = _tournaments
+        .where((t) => t.status.toLowerCase() == 'active')
+        .toList();
+    final upcoming = _tournaments
+        .where((t) => t.status.toLowerCase() == 'upcoming')
+        .toList();
+    final completed = _tournaments
+        .where((t) => t.status.toLowerCase() == 'completed')
+        .toList();
+
+    debugPrint('🟢 Live/Active: ${live.length}');
+    debugPrint('⏳ Upcoming: ${upcoming.length}');
+    debugPrint('✅ Completed: ${completed.length}');
+    for (final t in _tournaments) {
+      debugPrint('  → ${t.name} | status=${t.status} | start=${t.startDate} | end=${t.endDate}');
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+     if (live.isNotEmpty) ...[
+          _buildRowHeader('Live', live.length, _DS.live,
+              Icons.sensors_rounded),
+          const SizedBox(height: 14),
+          _buildHorizontalRow(live),
+          const SizedBox(height: 32),
+        ],
+      if (upcoming.isNotEmpty) ...[
+          _buildRowHeader('Upcoming', upcoming.length, _DS.warning,
+              Icons.event_rounded),
+          const SizedBox(height: 14),
+          _buildHorizontalRow(upcoming),
+          const SizedBox(height: 32),
+        ],
+   if (completed.isNotEmpty) ...[
+          _buildRowHeader('Completed', completed.length, _DS.success,
+              Icons.workspace_premium_rounded),
+          const SizedBox(height: 14),
+          _buildHorizontalRow(completed),
+          const SizedBox(height: 32),
+        ],
+        if (live.isEmpty && upcoming.isEmpty && completed.isEmpty)
+          _buildEmptyState(),
+      ],
     );
   }
+
+ Widget _buildRowHeader(String title, int count, Color color, IconData icon) {
+  return Row(
+    children: [
+      // Icon badge
+      Container(
+        width: 34,
+        height: 34,
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.10),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: color.withOpacity(0.25), width: 1),
+        ),
+        child: Icon(icon, color: color, size: 17),
+      ),
+      const SizedBox(width: 12),
+      Text(
+        title,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 16,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 1.2,
+        ),
+      ),
+      const SizedBox(width: 10),
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.12),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: color.withOpacity(0.3)),
+        ),
+        child: Text(
+          '$count',
+          style: TextStyle(
+            color: color,
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+      const SizedBox(width: 16),
+      Expanded(
+        child: Container(
+          height: 1,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [color.withOpacity(0.3), Colors.transparent],
+            ),
+          ),
+        ),
+      ),
+    ],
+  );
+}
+
+Widget _buildHorizontalRow(List<TournamentModel> list) {
+  const cardWidth = 260.0;
+  const cardHeight = 195.0;
+  const maxVisible = 6; // cards shown before "Show More" tile appears
+  final showMore = list.length > maxVisible;
+  final visibleList = showMore ? list.take(maxVisible).toList() : list;
+
+  // total items = visible cards + (1 show-more tile if needed)
+  final itemCount = visibleList.length + (showMore ? 1 : 0);
+
+  return SizedBox(
+    height: cardHeight + 20,
+    child: ScrollConfiguration(
+      behavior: _SilkScrollBehavior(),
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.only(
+          left: 2,
+          right: 24,
+          top: 8,
+          bottom: 8,
+        ),
+        itemCount: itemCount,
+        separatorBuilder: (_, __) => const SizedBox(width: 16),
+        itemBuilder: (context, index) {
+          // ── "Show More" tile at the end ──
+          if (showMore && index == visibleList.length) {
+            return _ShowMoreTile(
+              remaining: list.length - maxVisible,
+              width: cardWidth,
+              height: cardHeight,
+              allTournaments: list,
+              sessionId: widget.sessionId,
+            );
+          }
+
+          final t = visibleList[index];
+          return SizedBox(
+            width: cardWidth,
+            height: cardHeight,
+            // ── Uniform card background — fixes dark/black card issue ──
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: const Color(0xFF0A1628), // _DS.surface
+                borderRadius: BorderRadius.circular(16),
+              ),
+    child: ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: _HoverPreviewCard(
+                  tournament: t,
+                  onTap: () => _showTournamentModal(context, t),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    ),
+  );
+}
 
   Widget _buildEmptyState() {
     return Center(
@@ -1020,128 +1239,119 @@ class _SideNavRailState extends State<_SideNavRail> {
     return MouseRegion(
       onEnter: (_) => setState(() => _expanded = true),
       onExit: (_) => setState(() => _expanded = false),
-      child: ClipRect(
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOut,
-          width: _expanded ? _DS.navWidthExpanded : _DS.navWidthCollapsed,
-          decoration: BoxDecoration(
-            color: _DS.surface.withOpacity(0.85),
-            border: Border(
-              right: BorderSide(
-                color: Colors.white.withOpacity(0.05),
-                width: 1,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+        width: _expanded ? _DS.navWidthExpanded : _DS.navWidthCollapsed,
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.centerLeft,
+            end: Alignment.centerRight,
+            colors: _expanded
+                ? [
+                    Colors.black.withOpacity(0.52),
+                    Colors.black.withOpacity(0.28),
+                    Colors.transparent,
+                  ]
+                : [Colors.black.withOpacity(0.22), Colors.transparent],
+            stops: _expanded ? const [0.0, 0.65, 1.0] : const [0.0, 1.0],
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 36),
+            // Logo mark — shrinks slightly when collapsed
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    width: _expanded ? 40 : 36,
+                    height: _expanded ? 40 : 36,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      gradient: _DS.accentGrad,
+                      boxShadow: [
+                        BoxShadow(
+                          color: _DS.accent.withOpacity(0.35),
+                          blurRadius: 16,
+                          spreadRadius: 1,
+                        ),
+                      ],
+                    ),
+                    child: Icon(
+                      Icons.sports_cricket,
+                      color: Colors.white,
+                      size: _expanded ? 20 : 18,
+                    ),
+                  ),
+                  AnimatedSize(
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeOut,
+                    child: _expanded
+                        ? Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const SizedBox(width: 12),
+                              Text(
+                                'CRICTRAX',
+                                style: TextStyle(
+                                  color: _DS.accent,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 1.8,
+                                ),
+                              ),
+                            ],
+                          )
+                        : const SizedBox.shrink(),
+                  ),
+                ],
               ),
             ),
-            boxShadow: _expanded
-                ? [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.4),
-                      blurRadius: 20,
-                      offset: const Offset(4, 0),
-                    ),
-                  ]
-                : [],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const SizedBox(height: 36),
-              // Logo mark — shrinks slightly when collapsed
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Row(
-                  children: [
-                    AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
-                      width: _expanded ? 40 : 36,
-                      height: _expanded ? 40 : 36,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(12),
-                        gradient: _DS.accentGrad,
-                        boxShadow: [
-                          BoxShadow(
-                            color: _DS.accent.withOpacity(0.35),
-                            blurRadius: 16,
-                            spreadRadius: 1,
-                          ),
-                        ],
-                      ),
-                      child: Icon(
-                        Icons.sports_cricket,
-                        color: Colors.white,
-                        size: _expanded ? 20 : 18,
-                      ),
-                    ),
-                    AnimatedSize(
-                      duration: const Duration(milliseconds: 200),
-                      curve: Curves.easeOut,
-                      child: _expanded
-                          ? Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const SizedBox(width: 12),
-                                Text(
-                                  'CRICTRAX',
-                                  style: TextStyle(
-                                    color: _DS.accent,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w800,
-                                    letterSpacing: 1.8,
-                                  ),
-                                ),
-                              ],
-                            )
-                          : const SizedBox.shrink(),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 40),
+            const SizedBox(height: 40),
 
-              // Nav items
-              ...List.generate(_items.length, (i) {
-                final item = _items[i];
-                return _NavItem(
-                  icon: item.icon,
-                  label: item.label,
-                  isSelected: widget.selectedIndex == i,
-                  expanded: _expanded,
-                  onTap: () => widget.onIndexChanged(i),
-                );
-              }),
-
-              const Spacer(),
-
-              // Divider
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Divider(
-                  color: Colors.white.withOpacity(0.06),
-                  height: 1,
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // Logout
-              _NavItem(
-                icon: Icons.logout_rounded,
-                label: 'Logout',
-                isSelected: false,
+            // Nav items
+            ...List.generate(_items.length, (i) {
+              final item = _items[i];
+              return _NavItem(
+                icon: item.icon,
+                label: item.label,
+                isSelected: widget.selectedIndex == i,
                 expanded: _expanded,
-                onTap: widget.onLogout,
-                isDanger: true,
-              ),
-              const SizedBox(height: 28),
-            ],
-          ),
+                onTap: () => widget.onIndexChanged(i),
+              );
+            }),
+
+            const Spacer(),
+
+            // Divider
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Divider(color: Colors.white.withOpacity(0.06), height: 1),
+            ),
+            const SizedBox(height: 16),
+
+            // Logout
+            _NavItem(
+              icon: Icons.logout_rounded,
+              label: 'Logout',
+              isSelected: false,
+              expanded: _expanded,
+              onTap: widget.onLogout,
+              isDanger: true,
+            ),
+            const SizedBox(height: 28),
+          ],
         ),
       ),
     );
   }
 }
 
-class _NavItem extends StatelessWidget {
+class _NavItem extends StatefulWidget {
   final IconData icon;
   final String label;
   final bool isSelected;
@@ -1159,92 +1369,114 @@ class _NavItem extends StatelessWidget {
   });
 
   @override
+  State<_NavItem> createState() => _NavItemState();
+}
+
+class _NavItemState extends State<_NavItem> {
+  bool _hovered = false;
+
+  @override
   Widget build(BuildContext context) {
+    final active = widget.isSelected;
+    final hovered = _hovered && !active;
+ final activeColor = widget.isDanger ? _DS.danger : _DS.accent;
+    final hoverColor = Colors.transparent;
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
-      child: Focus(
-        child: Builder(
-          builder: (ctx) {
-            final focused = Focus.of(ctx).hasFocus;
-            final active = isSelected || focused;
-            final activeColor = isDanger ? _DS.danger : _DS.accent;
-
-            return GestureDetector(
-              onTap: onTap,
-              child: AnimatedOpacity(
-                opacity: active ? 1.0 : 0.72,
-                duration: const Duration(milliseconds: 200),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  curve: Curves.easeOut,
-                  margin: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 2,
-                  ),
-                  padding: EdgeInsets.symmetric(
-                    vertical: expanded ? 12 : 10,
-                    horizontal: expanded ? 14 : 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: active
-                        ? activeColor.withOpacity(0.12)
-                        : Colors.transparent,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: active
-                          ? activeColor.withOpacity(0.3)
-                          : Colors.transparent,
-                      width: 1,
-                    ),
-                    boxShadow: active && !isDanger
-                        ? [
-                            BoxShadow(
-                              color: activeColor.withOpacity(0.2),
-                              blurRadius: 12,
-                              spreadRadius: 0,
-                            ),
-                          ]
-                        : [],
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        icon,
-                        color: active
-                            ? activeColor
-                            : Colors.white.withOpacity(0.28),
-                        size: expanded ? 22 : 24,
-                      ),
-                      AnimatedSize(
-                        duration: const Duration(milliseconds: 200),
-                        curve: Curves.easeOut,
-                        child: expanded
-                            ? Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const SizedBox(width: 14),
-                                  Text(
-                                    label,
-                                    style: TextStyle(
-                                      color: active
-                                          ? activeColor
-                                          : Colors.white.withOpacity(0.28),
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w700,
-                                      letterSpacing: 0.3,
-                                    ),
-                                  ),
-                                ],
-                              )
-                            : const SizedBox.shrink(),
-                      ),
-                    ],
-                  ),
-                ),
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          onTap: widget.onTap,
+          child: AnimatedOpacity(
+            opacity: active ? 1.0 : (_hovered ? 1.0 : 0.72),
+            duration: const Duration(milliseconds: 150),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              curve: Curves.easeOut,
+              margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+              padding: EdgeInsets.symmetric(
+                vertical: widget.expanded ? 12 : 10,
+                horizontal: widget.expanded ? 14 : 4,
               ),
-            );
-          },
+         decoration: BoxDecoration(
+                color: active
+                    ? activeColor.withOpacity(0.12)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: active
+                      ? activeColor.withOpacity(0.3)
+                      : Colors.transparent,
+                  width: 1,
+                ),
+                boxShadow: active && !widget.isDanger
+                    ? [
+                        BoxShadow(
+                          color: activeColor.withOpacity(0.2),
+                          blurRadius: 12,
+                          spreadRadius: 0,
+                        ),
+                      ]
+                    : [],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Icon with its own hover highlight — tight fit
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: _hovered && !active
+                          ? Colors.white.withOpacity(0.08)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(
+                      widget.icon,
+                      color: active
+                          ? activeColor
+                          : _hovered
+                          ? Colors.white
+                          : Colors.white.withOpacity(0.55),
+                      size: widget.expanded ? 20 : 22,
+                    ),
+                  ),
+                  AnimatedSize(
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeOut,
+                    child: widget.expanded
+                        ? Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const SizedBox(width: 8),
+                              AnimatedDefaultTextStyle(
+                                duration: const Duration(milliseconds: 150),
+                                style: TextStyle(
+                                  color: active
+                                      ? activeColor
+                                      : _hovered
+                                      ? Colors.white
+                                      : Colors.white.withOpacity(0.55),
+                                  fontSize: 13,
+                                  fontWeight: _hovered || active
+                                      ? FontWeight.w700
+                                      : FontWeight.w500,
+                                  letterSpacing: 0.3,
+                                ),
+                                child: Text(widget.label),
+                              ),
+                            ],
+                          )
+                        : const SizedBox.shrink(),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
       ),
     );
@@ -1257,10 +1489,7 @@ class _HoverPreviewCard extends StatefulWidget {
   final TournamentModel tournament;
   final VoidCallback onTap;
 
-  const _HoverPreviewCard({
-    required this.tournament,
-    required this.onTap,
-  });
+  const _HoverPreviewCard({required this.tournament, required this.onTap});
 
   @override
   State<_HoverPreviewCard> createState() => _HoverPreviewCardState();
@@ -1280,9 +1509,10 @@ class _HoverPreviewCardState extends State<_HoverPreviewCard>
       vsync: this,
       duration: const Duration(milliseconds: 200),
     );
-    _scaleAnim = Tween<double>(begin: 1.0, end: 1.06).animate(
-      CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic),
-    );
+    _scaleAnim = Tween<double>(
+      begin: 1.0,
+      end: 1.06,
+    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic));
     _fadeAnim = CurvedAnimation(parent: _ctrl, curve: Curves.easeOut);
   }
 
@@ -1434,12 +1664,14 @@ class _HoverPreviewCardState extends State<_HoverPreviewCard>
                                                 _DS.accentDim,
                                               ],
                                             ),
-                                            borderRadius:
-                                                BorderRadius.circular(8),
+                                            borderRadius: BorderRadius.circular(
+                                              8,
+                                            ),
                                             boxShadow: [
                                               BoxShadow(
-                                                color: _DS.accent
-                                                    .withOpacity(0.35),
+                                                color: _DS.accent.withOpacity(
+                                                  0.35,
+                                                ),
                                                 blurRadius: 12,
                                               ),
                                             ],
@@ -1485,6 +1717,7 @@ class _HoverPreviewCardState extends State<_HoverPreviewCard>
     );
   }
 }
+
 // ─── Stat Chip ────────────────────────────────────────────────────────────────
 class _StatChip extends StatelessWidget {
   final IconData icon;
@@ -2119,4 +2352,294 @@ class _CrowdWaveformPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_CrowdWaveformPainter old) => old.phase != phase;
+}
+// ─── Show More Tile ───────────────────────────────────────────────────────────
+class _ShowMoreTile extends StatefulWidget {
+  final int remaining;
+  final double width;
+  final double height;
+  final List<TournamentModel> allTournaments;
+  final String? sessionId;
+
+  const _ShowMoreTile({
+    required this.remaining,
+    required this.width,
+    required this.height,
+    required this.allTournaments,
+    required this.sessionId,
+  });
+
+  @override
+  State<_ShowMoreTile> createState() => _ShowMoreTileState();
+}
+
+class _ShowMoreTileState extends State<_ShowMoreTile> {
+  bool _hovered = false;
+
+  void _showAllSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => DraggableScrollableSheet(
+        initialChildSize: 0.75,
+        maxChildSize: 0.95,
+        minChildSize: 0.4,
+        builder: (ctx, scrollCtrl) {
+          return Container(
+            decoration: const BoxDecoration(
+              color: Color(0xFF0A1628),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            child: Column(
+              children: [
+                // Handle
+                Container(
+                  margin: const EdgeInsets.only(top: 12),
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Row(
+                    children: [
+                      Text(
+                        'ALL TOURNAMENTS',
+                        style: TextStyle(
+                          color: _DS.accent,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 2,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: _DS.accent.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: _DS.accent.withOpacity(0.3),
+                          ),
+                        ),
+                        child: Text(
+                          '${widget.allTournaments.length}',
+                          style: TextStyle(
+                            color: _DS.accent,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Divider(
+                  color: Colors.white.withOpacity(0.06),
+                  height: 1,
+                ),
+                Expanded(
+                  child: ListView.separated(
+                    controller: scrollCtrl,
+                    padding: const EdgeInsets.all(20),
+                    itemCount: widget.allTournaments.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 12),
+                    itemBuilder: (ctx2, i) {
+                      final t = widget.allTournaments[i];
+                      return GestureDetector(
+                        onTap: () {
+                          Navigator.pop(ctx2);
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => TournamentDetailScreen(
+                                tournamentId: t.id,
+                                tournament: t,
+                                sessionId: widget.sessionId,
+                              ),
+                            ),
+                          );
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 18,
+                            vertical: 16,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0F1E35),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                              color: Colors.white.withOpacity(0.06),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 40,
+                                height: 40,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: _DS.teamColor(
+                                    t.name,
+                                  ).withOpacity(0.15),
+                                  border: Border.all(
+                                    color: _DS.teamColor(
+                                      t.name,
+                                    ).withOpacity(0.4),
+                                  ),
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    t.name.isNotEmpty
+                                        ? t.name[0].toUpperCase()
+                                        : '?',
+                                    style: TextStyle(
+                                      color: _DS.teamColor(t.name),
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 16,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 14),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      t.name,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      t.city,
+                                      style: TextStyle(
+                                        color: Colors.white.withOpacity(0.4),
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: _DS.accent.withOpacity(0.08),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                    color: _DS.accent.withOpacity(0.2),
+                                  ),
+                                ),
+                                child: Text(
+                                  t.status,
+                                  style: TextStyle(
+                                    color: _DS.accent,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Icon(
+                                Icons.chevron_right_rounded,
+                                color: Colors.white.withOpacity(0.3),
+                                size: 20,
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: () => _showAllSheet(context),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          width: widget.width,
+          height: widget.height,
+          decoration: BoxDecoration(
+            color: _hovered
+                ? _DS.accent.withOpacity(0.08)
+                : const Color(0xFF0A1628),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: _hovered
+                  ? _DS.accent.withOpacity(0.4)
+                  : Colors.white.withOpacity(0.06),
+              width: _hovered ? 2 : 1,
+            ),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: _DS.accent.withOpacity(0.08),
+                  border: Border.all(color: _DS.accent.withOpacity(0.25)),
+                ),
+                child: Icon(
+                  Icons.keyboard_arrow_down_rounded,
+                  color: _DS.accent,
+                  size: 26,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                '+${widget.remaining} more',
+                style: TextStyle(
+                  color: _DS.accent,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.3,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'View all',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.35),
+                  fontSize: 11,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
