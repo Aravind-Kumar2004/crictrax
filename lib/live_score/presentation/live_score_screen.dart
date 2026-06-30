@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:ui';
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:crictrax/login/presentation/login_screen.dart';
 import 'package:flutter/material.dart';
@@ -79,6 +78,7 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
   bool _showInningsBreak = false;
   int _firstInningsRuns = 0;
   int _firstInningsWickets = 0;
+
 
   // ── UI-only animation ─────────────────────────────────────────────────────
   late AnimationController _pulseCtrl;
