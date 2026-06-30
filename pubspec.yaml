@@ -36,7 +36,7 @@ dependencies:
   qr_flutter: ^4.1.0
   uuid: ^4.0.0
   firebase_auth: ^5.0.0
-  just_audio: ^0.9.36
+  just_audio: ^0.10.6
   audioplayers: ^6.0.0
 
   # The following adds the Cupertino Icons font to your application.
@@ -67,13 +67,7 @@ flutter:
   uses-material-design: true
 
   assets:
-      - assets/images/wicket_minimal.png
-      - assets/images/stadium_bg.jpeg
-      - assets/images/dash_bg.png
-      - assets/images/ad_1.jpg
-      - assets/images/ad_2.jpeg
-      - assets/images/ad_3.jpg
-      - assets/images/ad_4.jpg
+      - assets/images/
       - assets/audio/
 
 

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/physics.dart';
 
+import '../../services/background_music_service.dart';
 import 'widgets/ad_banner_widget.dart';
 import 'dart:ui';
 import 'package:flutter/material.dart';
@@ -168,6 +169,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   @override
   void initState() {
     super.initState();
+    BackgroundMusicService.instance.startMusic();
     _scrollCtrl.addListener(_onScroll); // NEW
 
     _pulseCtrl = AnimationController(
@@ -232,11 +234,14 @@ class _DashboardScreenState extends State<DashboardScreen>
       barrierColor: Colors.black.withOpacity(0.85),
       builder: (_) => _ForcedLogoutDialog(),
     );
-    Future.delayed(const Duration(seconds: 2), () {
+    Future.delayed(const Duration(seconds: 2), () async {
       if (!mounted) return;
+
+      await BackgroundMusicService.instance.stopMusic();
+
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const LoginScreen()),
-        (route) => false,
+            (route) => false,
       );
     });
   }
@@ -276,11 +281,14 @@ void _onScroll() {
     showDialog(
       context: context,
       builder: (_) => _LogoutDialog(
-        onConfirm: () {
+        onConfirm: () async {
           Navigator.pop(context);
+
+          await BackgroundMusicService.instance.stopMusic();
+
           Navigator.of(context).pushAndRemoveUntil(
             MaterialPageRoute(builder: (_) => const LoginScreen()),
-            (route) => false,
+                (route) => false,
           );
         },
         onCancel: () => Navigator.pop(context),
