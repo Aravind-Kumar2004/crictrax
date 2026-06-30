@@ -1,7 +1,11 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'package:flutter/physics.dart';
+
+import 'widgets/ad_banner_widget.dart';
 import 'dart:ui';
 import 'package:flutter/material.dart';
+
 import '../ data/models/repositories/dashboard_repository.dart';
 import '../ data/models/tournament_model.dart';
 import '../../login/presentation/login_screen.dart';
@@ -22,14 +26,17 @@ class _DS {
   static const success = Color(0xFF00E676);
   static const warning = Color(0xFFFFB300);
   static const danger = Color(0xFFFF3D3D);
-
-  // NEW — additional broadcast palette
-  static const gold = Color(0xFFFFD700);
-  static const purple = Color(0xFF9B59B6);
-  static const teal = Color(0xFF1ABC9C);
+  static Color teamColor(String seed) {
+    final hue = (seed.codeUnits.fold(0, (a, b) => a + b) * 37) % 360;
+    return HSLColor.fromAHSL(1.0, hue.toDouble(), 0.75, 0.55).toColor();
+  }
 
   // Nav rail width
-  static const navWidth = 110.0;
+  // Nav rail widths (collapsed = icon-only, expanded = hover state with labels)
+  static const navWidthCollapsed = 76.0;
+  static const navWidthExpanded = 200.0;
+  static const navWidth =
+      navWidthCollapsed; // kept for existing references (bg spacer, waveform, glow positions)
 
   // Radius
   static const r12 = Radius.circular(12);
@@ -51,18 +58,73 @@ class _DS {
   static const liveGrad = LinearGradient(
     colors: [Color(0xFFFF6B35), Color(0xFFCC3300)],
   );
+}
 
-  // NEW gradients
-  static const goldGrad = LinearGradient(
-    colors: [Color(0xFFFFD700), Color(0xFFFF8C00)],
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
-  );
-  static const successGrad = LinearGradient(
-    colors: [Color(0xFF00E676), Color(0xFF00897B)],
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
-  );
+// ─── Silk Scroll Behavior ─────────────────────────────────────────────────────
+// Removes scrollbar overlay (repaints every frame) and overscroll glow
+class _SilkScrollBehavior extends ScrollBehavior {
+  @override
+  Widget buildOverscrollIndicator(
+    BuildContext context,
+    Widget child,
+    ScrollableDetails details,
+  ) => child; // no glow
+
+  @override
+  Widget buildScrollbar(
+    BuildContext context,
+    Widget child,
+    ScrollableDetails details,
+  ) => child; // no scrollbar repaint layer
+
+  @override
+  ScrollPhysics getScrollPhysics(BuildContext context) =>
+      const _SilkScrollPhysics();
+}
+
+// ─── Silk Scroll Physics ──────────────────────────────────────────────────────
+// Crisp response + fast smooth deceleration — no spring bounce
+class _SilkScrollPhysics extends ScrollPhysics {
+  const _SilkScrollPhysics({super.parent});
+
+  @override
+  _SilkScrollPhysics applyTo(ScrollPhysics? ancestor) =>
+      _SilkScrollPhysics(parent: buildParent(ancestor));
+
+  // How quickly velocity decays — higher = faster stop, snappier feel
+  @override
+  double get dragStartDistanceMotionThreshold => 1.0;
+
+  @override
+  Simulation? createBallisticSimulation(
+    ScrollMetrics position,
+    double velocity,
+  ) {
+    // Already at rest
+    if (velocity.abs() < 0.5) return null;
+
+    // Out of range — snap back with a tight spring
+    if ((velocity > 0 && position.pixels >= position.maxScrollExtent) ||
+        (velocity < 0 && position.pixels <= position.minScrollExtent)) {
+      return super.createBallisticSimulation(position, velocity);
+    }
+
+    // Friction simulation — feels like glass on silk
+    return FrictionSimulation(
+      0.12, // friction: lower = longer glide, 0.12 = royal smooth
+      position.pixels,
+      velocity * 0.91, // slight velocity damping for elegance
+    );
+  }
+
+  @override
+  double applyPhysicsToUserOffset(ScrollMetrics position, double offset) {
+    // 1:1 finger-to-scroll mapping — zero lag on drag start
+    return offset;
+  }
+
+  @override
+  bool get allowImplicitScrolling => false;
 }
 
 // ─── Dashboard Screen ─────────────────────────────────────────────────────────
@@ -92,132 +154,41 @@ class _DashboardScreenState extends State<DashboardScreen>
   int _selectedNavIndex = 0;
   StreamSubscription? _logoutSub;
 
-  // NEW — live match data (optional, non-breaking)
-  Map<String, dynamic>? _featuredLiveMatch;
-  StreamSubscription? _liveMatchSub;
-
-  // NEW — connection status
-  bool _isConnected = true;
-  StreamSubscription? _connectivitySub;
-
-  // NEW — date/time ticker
-  late Timer _clockTimer;
-  DateTime _now = DateTime.now();
-
-  // NEW — ad carousel
-  late PageController _adPageCtrl;
-  late Timer _adTimer;
-  int _currentAdPage = 0;
+  // Drives ad-banner collapse/fade on scroll
+  final ScrollController _scrollCtrl = ScrollController();
+  final _adFade = ValueNotifier<double>(1.0);
+  static const double _adCollapseDistance = 160.0;
 
   // Animation controllers
   late AnimationController _pulseCtrl;
   late AnimationController _shimmerCtrl;
   late Animation<double> _pulseAnim;
-
-  // NEW animation controllers
-  late AnimationController _cardEntranceCtrl;
-  late AnimationController _tickerCtrl;
-  late AnimationController _heroBannerCtrl;
-  late Animation<double> _cardEntranceAnim;
-  late Animation<double> _heroBannerAnim;
-
-  // ── Ad content ─────────────────────────────────────────────────────────────
-  static const _adSlides = [
-    _AdSlide(
-      tag: 'ADVERTISEMENT',
-      headline: 'Ad Space Available',
-      subline: 'Premium placement for tournament sponsors',
-      icon: Icons.sports_cricket,
-      color: Color(0xFF00D4FF),
-    ),
-    _AdSlide(
-      tag: 'SPONSOR',
-      headline: 'Powered by CRICTRAX',
-      subline: 'The #1 cricket tournament management platform',
-      icon: Icons.emoji_events_rounded,
-      color: Color(0xFFFFD700),
-    ),
-    _AdSlide(
-      tag: 'BROADCAST',
-      headline: 'Live Scoring. Live Glory.',
-      subline: 'Real-time scores for every ball, every moment',
-      icon: Icons.live_tv_rounded,
-      color: Color(0xFFFF6B35),
-    ),
-  ];
-
-  // ── News ticker items ───────────────────────────────────────────────────────
-  static const _tickerItems = [
-    '🏏  CRICTRAX TV — Live Cricket Scoring Dashboard',
-    '📡  Stay connected to all your tournaments in real-time',
-    '🏆  View detailed scorecards, ball-by-ball commentary and player stats',
-    '📱  Manage tournaments from the CRICTRAX mobile app',
-    '🎯  Create new tournaments, add teams and start scoring instantly',
-    '🔴  Live matches stream automatically to this TV dashboard',
-  ];
+  late AnimationController _waveCtrl;
 
   @override
   void initState() {
     super.initState();
+    _scrollCtrl.addListener(_onScroll); // NEW
 
-    // Existing controllers (UNCHANGED)
     _pulseCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1600),
     )..repeat(reverse: true);
-    _pulseAnim = Tween<double>(begin: 0.4, end: 1.0).animate(
-      CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut),
-    );
+    _pulseAnim = Tween<double>(
+      begin: 0.4,
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut));
+
     _shimmerCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 2000),
     )..repeat();
-
-    // NEW controllers
-    _cardEntranceCtrl = AnimationController(
+    _waveCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1200),
-    );
-    _cardEntranceAnim = CurvedAnimation(
-      parent: _cardEntranceCtrl,
-      curve: Curves.easeOutCubic,
-    );
-
-    _tickerCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 30),
+      duration: const Duration(seconds: 4),
     )..repeat();
-
-    _heroBannerCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 800),
-    );
-    _heroBannerAnim = CurvedAnimation(
-      parent: _heroBannerCtrl,
-      curve: Curves.easeOutBack,
-    );
-
-    _adPageCtrl = PageController();
-
-    // NEW timers
-    _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() => _now = DateTime.now());
-    });
-
-    _adTimer = Timer.periodic(const Duration(seconds: 6), (_) {
-      if (!mounted) return;
-      final next = (_currentAdPage + 1) % _adSlides.length;
-      _adPageCtrl.animateToPage(
-        next,
-        duration: const Duration(milliseconds: 600),
-        curve: Curves.easeInOut,
-      );
-    });
-
     _fetchTournaments();
     _listenForLogout();
-    _listenForLiveMatch();
-    _listenConnectivity();
   }
 
   // ── Business Logic (UNCHANGED) ────────────────────────────────────────────
@@ -225,27 +196,33 @@ class _DashboardScreenState extends State<DashboardScreen>
   void _listenForLogout() {
     if (widget.sessionId == null) {
       debugPrint(
-          '⚠️ DashboardScreen: no sessionId provided — TV forced-logout listener not attached');
+        '⚠️ DashboardScreen: no sessionId provided — TV forced-logout listener not attached',
+      );
       return;
     }
     debugPrint(
-        '👂 DashboardScreen: listening for logout on tv_sessions/${widget.sessionId}');
+      '👂 DashboardScreen: listening for logout on tv_sessions/${widget.sessionId}',
+    );
     _logoutSub = FirebaseFirestore.instance
         .collection('tv_sessions')
         .doc(widget.sessionId)
         .snapshots()
-        .listen((snap) {
-      if (!snap.exists) return;
-      final data = snap.data()!;
-      if (data['loggedOut'] == true && mounted) {
-        debugPrint(
-            '🚪 DashboardScreen: loggedOut flag detected, showing forced logout modal');
-        _logoutSub?.cancel();
-        _showForcedLogoutModal();
-      }
-    }, onError: (e) {
-      debugPrint('❌ DashboardScreen: logout listener error: $e');
-    });
+        .listen(
+          (snap) {
+            if (!snap.exists) return;
+            final data = snap.data()!;
+            if (data['loggedOut'] == true && mounted) {
+              debugPrint(
+                '🚪 DashboardScreen: loggedOut flag detected, showing forced logout modal',
+              );
+              _logoutSub?.cancel();
+              _showForcedLogoutModal();
+            }
+          },
+          onError: (e) {
+            debugPrint('❌ DashboardScreen: logout listener error: $e');
+          },
+        );
   }
 
   void _showForcedLogoutModal() {
@@ -259,24 +236,29 @@ class _DashboardScreenState extends State<DashboardScreen>
       if (!mounted) return;
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const LoginScreen()),
-            (route) => false,
+        (route) => false,
       );
     });
   }
 
-  @override
+  // Collapses + fades the ad banner as the user scrolls
+void _onScroll() {
+    final offset = _scrollCtrl.offset.clamp(0.0, _adCollapseDistance);
+    final fade = 1.0 - (offset / _adCollapseDistance);
+    if ((fade - _adFade.value).abs() > 0.01) {
+      _adFade.value = fade;
+    }
+  }
+
+@override
   void dispose() {
     _logoutSub?.cancel();
-    _liveMatchSub?.cancel();
-    _connectivitySub?.cancel();
-    _clockTimer.cancel();
-    _adTimer.cancel();
+    _scrollCtrl.removeListener(_onScroll);
+    _scrollCtrl.dispose();
     _pulseCtrl.dispose();
     _shimmerCtrl.dispose();
-    _cardEntranceCtrl.dispose();
-    _tickerCtrl.dispose();
-    _heroBannerCtrl.dispose();
-    _adPageCtrl.dispose();
+    _waveCtrl.dispose();
+    _adFade.dispose();
     super.dispose();
   }
 
@@ -287,7 +269,6 @@ class _DashboardScreenState extends State<DashboardScreen>
         _tournaments = tournaments;
         _loading = false;
       });
-      _cardEntranceCtrl.forward();
     }
   }
 
@@ -299,63 +280,13 @@ class _DashboardScreenState extends State<DashboardScreen>
           Navigator.pop(context);
           Navigator.of(context).pushAndRemoveUntil(
             MaterialPageRoute(builder: (_) => const LoginScreen()),
-                (route) => false,
+            (route) => false,
           );
         },
         onCancel: () => Navigator.pop(context),
       ),
     );
   }
-
-  // ── NEW: non-breaking live match listener ─────────────────────────────────
-  void _listenForLiveMatch() {
-    try {
-      _liveMatchSub = FirebaseFirestore.instance
-          .collection('matches')
-          .where('userId', isEqualTo: widget.userId)
-          .where('status', isEqualTo: 'live')
-          .limit(1)
-          .snapshots()
-          .listen((snap) {
-        if (!mounted) return;
-        if (snap.docs.isNotEmpty) {
-          final data = snap.docs.first.data();
-          setState(() => _featuredLiveMatch = data);
-          if (!_heroBannerCtrl.isCompleted) _heroBannerCtrl.forward();
-        } else {
-          setState(() => _featuredLiveMatch = null);
-          _heroBannerCtrl.reverse();
-        }
-      }, onError: (_) {
-        // Non-breaking: silently ignore if collection doesn't exist
-      });
-    } catch (_) {}
-  }
-
-  // ── NEW: Firebase connectivity monitor ───────────────────────────────────
-  void _listenConnectivity() {
-    try {
-      _connectivitySub = FirebaseFirestore.instance
-          .collection('.info')
-          .doc('connected')
-          .snapshots()
-          .listen((snap) {
-        if (!mounted) return;
-        final connected = snap.data()?['connected'] as bool? ?? true;
-        setState(() => _isConnected = connected);
-      }, onError: (_) {
-        // Non-breaking
-      });
-    } catch (_) {}
-  }
-
-  // ── Computed stats from existing _tournaments (no new Firestore queries) ──
-  int get _liveTournamentCount =>
-      _tournaments.where((t) => t.status?.toLowerCase() == 'live').length;
-  int get _completedTournamentCount =>
-      _tournaments.where((t) => t.status?.toLowerCase() == 'completed').length;
-  int get _upcomingTournamentCount =>
-      _tournaments.where((t) => t.status?.toLowerCase() == 'upcoming').length;
 
   // ── Build ─────────────────────────────────────────────────────────────────
 
@@ -367,10 +298,67 @@ class _DashboardScreenState extends State<DashboardScreen>
       backgroundColor: _DS.bg,
       body: Stack(
         children: [
-          // Ambient background glow (UNCHANGED)
+          // ── Stadium background (content area only, nav excluded) ──────────
+          Row(
+            children: [
+              // Spacer that matches nav rail width — keeps bg off the nav
+              const SizedBox(width: 0),
+              Expanded(
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    // Stadium photo
+                    Image.asset('assets/images/dash_bg.png', fit: BoxFit.cover),
+                    // Dark overlay so content stays readable
+                    Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            _DS.bg.withOpacity(0.82),
+                            _DS.bg.withOpacity(0.70),
+                            _DS.bg.withOpacity(0.88),
+                          ],
+                          stops: const [0.0, 0.45, 1.0],
+                        ),
+                      ),
+                    ),
+                    // Left-edge fade so content blends into nav seamlessly
+                    Positioned(
+                      left: 0,
+                      top: 0,
+                      bottom: 0,
+                      width: 80,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [_DS.bg, Colors.transparent],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          // ── Crowd waveform overlay ────────────────────────────────────────
+          Positioned(
+            left: _DS.navWidth,
+            top: 0,
+            right: 0,
+            bottom: 0,
+            child: AnimatedBuilder(
+              animation: _waveCtrl,
+              builder: (_, __) =>
+                  CustomPaint(painter: _CrowdWaveformPainter(_waveCtrl.value)),
+            ),
+          ),
+          // ── Ambient glows ─────────────────────────────────────────────────
           Positioned(
             top: -120,
-            left: 60,
+            left: _DS.navWidth + 60,
             child: _AmbientGlow(color: _DS.accent, size: 400),
           ),
           Positioned(
@@ -378,49 +366,40 @@ class _DashboardScreenState extends State<DashboardScreen>
             right: 100,
             child: _AmbientGlow(color: const Color(0xFF6C3AFF), size: 300),
           ),
-          // NEW — subtle top broadcast stripe
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: Container(
-              height: 2,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    Colors.transparent,
-                    _DS.accent,
-                    _DS.live,
-                    _DS.accent,
-                    Colors.transparent,
-                  ],
-                ),
-              ),
-            ),
-          ),
-          // Main layout
+          // ── Main layout ───────────────────────────────────────────────────
+          // ── Main layout ───────────────────────────────────────────────────
           Row(
             children: [
-              _SideNavRail(
-                selectedIndex: _selectedNavIndex,
-                onIndexChanged: (i) {
-                  if (i == 3) {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) =>
-                        const SettingsScreen(initialNavIndex: 3),
-                      ),
-                    );
-                  } else {
-                    setState(() => _selectedNavIndex = i);
-                  }
-                },
-                onLogout: () => _showLogoutDialog(context),
-                tournamentCount: _tournaments.length,
-              ),
+              const SizedBox(
+                width: _DS.navWidthCollapsed,
+              ), // fixed slot, rail overlays on top
               Expanded(child: _buildMainContent()),
             ],
+          ),
+          // Rail drawn last so it overlays content while expanding —
+          // doesn't push or reflow the main content during animation.
+          Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            child: _SideNavRail(
+              selectedIndex: _selectedNavIndex,
+              onIndexChanged: (i) {
+                if (i == 3) {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) =>
+                          const SettingsScreen(initialNavIndex: 3),
+                    ),
+                  );
+                } else {
+                  setState(() => _selectedNavIndex = i);
+                }
+              },
+              onLogout: () => _showLogoutDialog(context),
+              tournamentCount: _tournaments.length,
+            ),
           ),
         ],
       ),
@@ -428,174 +407,53 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   Widget _buildMainContent() {
-    return Column(
-      children: [
-        // NEW — top status bar (news ticker + time + connection)
-        _buildStatusBar(),
-        Expanded(
-          child: Padding(
-            padding:
-            const EdgeInsets.only(top: 20, left: 40, right: 48, bottom: 0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildHeader(),
-                const SizedBox(height: 20),
-                // NEW — stats bar
-                _buildStatsBar(),
-                const SizedBox(height: 20),
-                // Featured live match (shown only when live match exists)
-                if (_featuredLiveMatch != null) ...[
-                  _buildFeaturedLiveCard(),
-                  const SizedBox(height: 20),
-                ],
-                // Ad carousel (replaces static banner)
-                _buildAdCarousel(),
-                const SizedBox(height: 24),
-                Expanded(
-                  child: SingleChildScrollView(
-                    physics: const BouncingScrollPhysics(),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // NEW — Quick Action Panel
-                        _buildQuickActionPanel(),
-                        const SizedBox(height: 28),
-                        _buildSectionHeader(
-                            'My Tournaments', _tournaments.length),
-                        const SizedBox(height: 20),
-                        _tournaments.isEmpty
-                            ? _buildEmptyState()
-                            : _buildTournamentGrid(),
-                        const SizedBox(height: 40),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  // ── NEW: Status Bar ────────────────────────────────────────────────────────
-  Widget _buildStatusBar() {
-    final h = _now.hour;
-    final m = _now.minute.toString().padLeft(2, '0');
-    final s = _now.second.toString().padLeft(2, '0');
-    final period = h >= 12 ? 'PM' : 'AM';
-    final h12 = h % 12 == 0 ? 12 : h % 12;
-    final weekdays = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
-    final months = [
-      'JAN','FEB','MAR','APR','MAY','JUN',
-      'JUL','AUG','SEP','OCT','NOV','DEC'
-    ];
-    final dayStr =
-        '${weekdays[_now.weekday - 1]}  ${_now.day} ${months[_now.month - 1]}';
-
-    return Container(
-      height: 36,
-      color: const Color(0xFF020712),
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Row(
-        children: [
-          // Ticker
-          Expanded(
-            child: _NewsTicker(
-              items: _tickerItems,
-              controller: _tickerCtrl,
-            ),
-          ),
-          const SizedBox(width: 24),
-          // Date
-          Text(
-            dayStr,
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.4),
-              fontSize: 10,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 1.5,
-            ),
-          ),
-          const SizedBox(width: 16),
-          // Time
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.baseline,
-            textBaseline: TextBaseline.alphabetic,
+    return Padding(
+      padding: const EdgeInsets.only(top: 24, left: 40, right: 48, bottom: 24),
+      child: ScrollConfiguration(
+        behavior: _SilkScrollBehavior(),
+        child: SingleChildScrollView(
+          controller: _scrollCtrl,
+          physics: const _SilkScrollPhysics(),
+        child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                '$h12:$m:$s',
-                style: TextStyle(
-                  color: _DS.accent,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 1,
-                  fontFeatures: const [FontFeature.tabularFigures()],
+              ValueListenableBuilder<double>(
+                valueListenable: _adFade,
+                builder: (_, fade, __) => Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ClipRect(
+                      child: Align(
+                        alignment: Alignment.topCenter,
+                        heightFactor: fade,
+                        child: Opacity(
+                          opacity: fade,
+                          child: const AdBannerWidget(),
+                        ),
+                      ),
+                    ),
+                    SizedBox(height: 20 * fade),
+                  ],
                 ),
               ),
-              const SizedBox(width: 4),
-              Text(
-                period,
-                style: TextStyle(
-                  color: _DS.accent.withOpacity(0.5),
-                  fontSize: 9,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
+_buildSectionHeader('My Tournaments', _tournaments.length),
+              const SizedBox(height: 28),
+              _tournaments.isEmpty
+                  ? _buildEmptyState()
+                  : _buildTournamentRows(),
+              const SizedBox(height: 40),
             ],
           ),
-          const SizedBox(width: 16),
-          // Connection dot
-          AnimatedBuilder(
-            animation: _pulseAnim,
-            builder: (_, __) => Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 7,
-                  height: 7,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: _isConnected
-                        ? _DS.success.withOpacity(
-                        _isConnected ? _pulseAnim.value : 0.3)
-                        : _DS.danger,
-                    boxShadow: _isConnected
-                        ? [
-                      BoxShadow(
-                        color: _DS.success.withOpacity(0.5),
-                        blurRadius: 6,
-                      )
-                    ]
-                        : [],
-                  ),
-                ),
-                const SizedBox(width: 5),
-                Text(
-                  _isConnected ? 'LIVE' : 'OFFLINE',
-                  style: TextStyle(
-                    color: _isConnected ? _DS.success : _DS.danger,
-                    fontSize: 9,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 1.5,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
 
-  // ── EXISTING: Header (UNCHANGED, kept exactly) ─────────────────────────────
   Widget _buildHeader() {
-    final initial =
-    widget.displayName.isNotEmpty ? widget.displayName[0].toUpperCase() : 'U';
-    final name =
-    widget.displayName.isNotEmpty ? widget.displayName : 'Player';
+    final initial = widget.displayName.isNotEmpty
+        ? widget.displayName[0].toUpperCase()
+        : 'U';
+    final name = widget.displayName.isNotEmpty ? widget.displayName : 'Player';
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -654,10 +512,10 @@ class _DashboardScreenState extends State<DashboardScreen>
           ],
         ),
         const Spacer(),
-        // Stats chips row (UNCHANGED)
+        // Stats chips row
         Row(
           children: [
-            _StatChip(
+            _ScoreFlashChip(
               icon: Icons.emoji_events_rounded,
               label: '${_tournaments.length}',
               sublabel: 'Tournaments',
@@ -678,467 +536,18 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
   }
 
-  // ── NEW: Stats Bar ─────────────────────────────────────────────────────────
-  Widget _buildStatsBar() {
-    final stats = [
-      _StatCard(
-        label: 'TOTAL',
-        value: '${_tournaments.length}',
-        icon: Icons.emoji_events_rounded,
-        color: _DS.accent,
-        gradient: _DS.accentGrad,
-      ),
-      _StatCard(
-        label: 'LIVE',
-        value: '$_liveTournamentCount',
-        icon: Icons.sensors_rounded,
-        color: _DS.live,
-        gradient: _DS.liveGrad,
-        isPulsing: true,
-      ),
-      _StatCard(
-        label: 'COMPLETED',
-        value: '$_completedTournamentCount',
-        icon: Icons.check_circle_rounded,
-        color: _DS.success,
-        gradient: _DS.successGrad,
-      ),
-      _StatCard(
-        label: 'UPCOMING',
-        value: '$_upcomingTournamentCount',
-        icon: Icons.schedule_rounded,
-        color: _DS.warning,
-        gradient: _DS.goldGrad,
-      ),
-    ];
-
-    return AnimatedBuilder(
-      animation: _cardEntranceAnim,
-      builder: (_, __) {
-        return Row(
-          children: List.generate(stats.length, (i) {
-            final delay = i / stats.length;
-            final t = (_cardEntranceAnim.value - delay).clamp(0.0, 1.0) /
-                (1.0 - delay + 0.001);
-            return Expanded(
-              child: Padding(
-                padding: EdgeInsets.only(right: i < stats.length - 1 ? 14 : 0),
-                child: Transform.translate(
-                  offset: Offset(0, 20 * (1 - t)),
-                  child: Opacity(
-                    opacity: t.clamp(0.0, 1.0),
-                    child: _buildStatCard(stats[i]),
-                  ),
-                ),
-              ),
-            );
-          }),
-        );
-      },
-    );
-  }
-
-  Widget _buildStatCard(_StatCard s) {
-    return Container(
-      height: 72,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(14),
-        color: _DS.surfaceHigh,
-        border: Border.all(
-          color: s.color.withOpacity(0.18),
-          width: 1,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: s.color.withOpacity(0.08),
-            blurRadius: 16,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(14),
-        child: Stack(
-          children: [
-            // Subtle gradient tint on left
-            Positioned(
-              left: 0,
-              top: 0,
-              bottom: 0,
-              child: Container(
-                width: 3,
-                decoration: BoxDecoration(gradient: s.gradient),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              child: Row(
-                children: [
-                  Container(
-                    width: 36,
-                    height: 36,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: s.color.withOpacity(0.1),
-                    ),
-                    child: s.isPulsing
-                        ? AnimatedBuilder(
-                      animation: _pulseAnim,
-                      builder: (_, __) => Icon(
-                        s.icon,
-                        color: s.color.withOpacity(
-                            0.5 + _pulseAnim.value * 0.5),
-                        size: 18,
-                      ),
-                    )
-                        : Icon(s.icon, color: s.color, size: 18),
-                  ),
-                  const SizedBox(width: 12),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        s.value,
-                        style: TextStyle(
-                          color: s.color,
-                          fontSize: 22,
-                          fontWeight: FontWeight.w900,
-                          height: 1.0,
-                        ),
-                      ),
-                      Text(
-                        s.label,
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.4),
-                          fontSize: 9,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 1.5,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ── NEW: Featured Live Match Hero Card ─────────────────────────────────────
-  Widget _buildFeaturedLiveCard() {
-    final match = _featuredLiveMatch!;
-    final team1 = match['team1Name'] as String? ?? 'Team A';
-    final team2 = match['team2Name'] as String? ?? 'Team B';
-    final score1 = match['team1Score'] as String? ?? '—';
-    final score2 = match['team2Score'] as String? ?? '—';
-    final overs = match['currentOvers'] as String? ?? '0.0';
-    final status = match['matchStatus'] as String? ?? 'In Progress';
-
-    return ScaleTransition(
-      scale: _heroBannerAnim,
-      child: FadeTransition(
-        opacity: _heroBannerAnim,
-        child: Container(
-          width: double.infinity,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20),
-            gradient: LinearGradient(
-              colors: [
-                const Color(0xFF1A0A00),
-                const Color(0xFF2A1000),
-                const Color(0xFF0A0A1A),
-              ],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            border: Border.all(
-              color: _DS.live.withOpacity(0.4),
-              width: 1.5,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: _DS.live.withOpacity(0.2),
-                blurRadius: 32,
-                spreadRadius: 0,
-                offset: const Offset(0, 8),
-              ),
-            ],
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(20),
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child: CustomPaint(painter: _GridPatternPainter()),
-                ),
-                // Live accent stripe
-                Positioned(
-                  left: 0,
-                  top: 0,
-                  bottom: 0,
-                  child: Container(
-                    width: 4,
-                    decoration: BoxDecoration(
-                      gradient: _DS.liveGrad,
-                      borderRadius: const BorderRadius.only(
-                        topLeft: Radius.circular(20),
-                        bottomLeft: Radius.circular(20),
-                      ),
-                    ),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 28, vertical: 18),
-                  child: Row(
-                    children: [
-                      // LIVE badge
-                      Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          AnimatedBuilder(
-                            animation: _pulseAnim,
-                            builder: (_, __) => Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 10, vertical: 4),
-                              decoration: BoxDecoration(
-                                gradient: _DS.liveGrad,
-                                borderRadius: BorderRadius.circular(6),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: _DS.live
-                                        .withOpacity(_pulseAnim.value * 0.6),
-                                    blurRadius: 12,
-                                  ),
-                                ],
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Container(
-                                    width: 6,
-                                    height: 6,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: Colors.white
-                                          .withOpacity(_pulseAnim.value),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 5),
-                                  const Text(
-                                    'LIVE',
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.w900,
-                                      letterSpacing: 2,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'FEATURED MATCH',
-                            style: TextStyle(
-                              color: Colors.white.withOpacity(0.3),
-                              fontSize: 9,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 2,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(width: 28),
-                      // Team 1
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              team1.toUpperCase(),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: 0.5,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              score1,
-                              style: TextStyle(
-                                color: _DS.accent,
-                                fontSize: 28,
-                                fontWeight: FontWeight.w900,
-                                letterSpacing: -0.5,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      // VS divider
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              'VS',
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.2),
-                                fontSize: 14,
-                                fontWeight: FontWeight.w900,
-                                letterSpacing: 2,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 3),
-                              decoration: BoxDecoration(
-                                color: _DS.surface,
-                                borderRadius: BorderRadius.circular(6),
-                                border: Border.all(
-                                    color: Colors.white.withOpacity(0.08)),
-                              ),
-                              child: Text(
-                                '$overs ov',
-                                style: TextStyle(
-                                  color: Colors.white.withOpacity(0.5),
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      // Team 2
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              team2.toUpperCase(),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: 0.5,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              score2,
-                              style: TextStyle(
-                                color: _DS.accent,
-                                fontSize: 28,
-                                fontWeight: FontWeight.w900,
-                                letterSpacing: -0.5,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 20),
-                      // Status
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: _DS.surface,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
-                            color: Colors.white.withOpacity(0.06),
-                          ),
-                        ),
-                        child: Text(
-                          status,
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.6),
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ── NEW: Ad Carousel (replaces static broadcast banner) ───────────────────
-  Widget _buildAdCarousel() {
-    return SizedBox(
-      height: 120,
-      child: Stack(
-        children: [
-          PageView.builder(
-            controller: _adPageCtrl,
-            onPageChanged: (i) => setState(() => _currentAdPage = i),
-            itemCount: _adSlides.length,
-            itemBuilder: (_, i) => _buildAdSlide(_adSlides[i]),
-          ),
-          // Page dots
-          Positioned(
-            bottom: 10,
-            right: 20,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: List.generate(
-                _adSlides.length,
-                    (i) => AnimatedContainer(
-                  duration: const Duration(milliseconds: 300),
-                  width: _currentAdPage == i ? 18 : 5,
-                  height: 5,
-                  margin: const EdgeInsets.only(left: 4),
-                  decoration: BoxDecoration(
-                    color: _currentAdPage == i
-                        ? _adSlides[i].color
-                        : Colors.white.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(3),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAdSlide(_AdSlide slide) {
+  Widget _buildBroadcastBanner() {
     return Container(
       width: double.infinity,
+      height: 148,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(20),
         gradient: LinearGradient(
-          colors: [
-            const Color(0xFF0A1628),
-            const Color(0xFF0D1E38),
-          ],
+          colors: [const Color(0xFF0A1628), const Color(0xFF0D1E38)],
           begin: Alignment.centerLeft,
           end: Alignment.centerRight,
         ),
-        border: Border.all(
-          color: Colors.white.withOpacity(0.06),
-          width: 1,
-        ),
+        border: Border.all(color: Colors.white.withOpacity(0.06), width: 1),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.4),
@@ -1151,9 +560,8 @@ class _DashboardScreenState extends State<DashboardScreen>
         borderRadius: BorderRadius.circular(20),
         child: Stack(
           children: [
-            Positioned.fill(
-              child: CustomPaint(painter: _GridPatternPainter()),
-            ),
+            // Subtle cricket field pattern overlay
+            Positioned.fill(child: CustomPaint(painter: _GridPatternPainter())),
             // Left accent stripe
             Positioned(
               left: 0,
@@ -1162,23 +570,21 @@ class _DashboardScreenState extends State<DashboardScreen>
               child: Container(
                 width: 4,
                 decoration: BoxDecoration(
-                  color: slide.color,
+                  gradient: LinearGradient(
+                    colors: [_DS.accent, _DS.accentDim],
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                  ),
                   borderRadius: const BorderRadius.only(
                     topLeft: Radius.circular(20),
                     bottomLeft: Radius.circular(20),
                   ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: slide.color.withOpacity(0.5),
-                      blurRadius: 8,
-                    ),
-                  ],
                 ),
               ),
             ),
+            // Content
             Padding(
-              padding:
-              const EdgeInsets.symmetric(horizontal: 28, vertical: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 20),
               child: Row(
                 children: [
                   Column(
@@ -1193,11 +599,11 @@ class _DashboardScreenState extends State<DashboardScreen>
                               width: 8,
                               height: 8,
                               decoration: BoxDecoration(
-                                color: slide.color.withOpacity(_pulseAnim.value),
+                                color: _DS.live.withOpacity(_pulseAnim.value),
                                 shape: BoxShape.circle,
                                 boxShadow: [
                                   BoxShadow(
-                                    color: slide.color.withOpacity(0.6),
+                                    color: _DS.live.withOpacity(0.6),
                                     blurRadius: 6,
                                   ),
                                 ],
@@ -1206,9 +612,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                           ),
                           const SizedBox(width: 8),
                           Text(
-                            slide.tag,
+                            'ADVERTISEMENT',
                             style: TextStyle(
-                              color: slide.color,
+                              color: _DS.live,
                               fontSize: 10,
                               fontWeight: FontWeight.w800,
                               letterSpacing: 3.0,
@@ -1216,40 +622,43 @@ class _DashboardScreenState extends State<DashboardScreen>
                           ),
                         ],
                       ),
-                      const SizedBox(height: 8),
-                      Text(
-                        slide.headline,
-                        style: const TextStyle(
+                      const SizedBox(height: 10),
+                      const Text(
+                        'Ad Space',
+                        style: TextStyle(
                           color: Colors.white,
-                          fontSize: 20,
+                          fontSize: 22,
                           fontWeight: FontWeight.w800,
                           letterSpacing: 0.3,
                         ),
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 6),
                       Text(
-                        slide.subline,
+                        'Premium placement available for sponsors',
                         style: TextStyle(
                           color: Colors.white.withOpacity(0.35),
-                          fontSize: 12,
+                          fontSize: 13,
                         ),
                       ),
                     ],
                   ),
                   const Spacer(),
+                  // Decorative cricket icon
                   Container(
-                    width: 72,
-                    height: 72,
+                    width: 80,
+                    height: 80,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: slide.color.withOpacity(0.05),
+                      color: _DS.accent.withOpacity(0.05),
                       border: Border.all(
-                          color: slide.color.withOpacity(0.12), width: 1),
+                        color: _DS.accent.withOpacity(0.12),
+                        width: 1,
+                      ),
                     ),
                     child: Icon(
-                      slide.icon,
-                      color: slide.color.withOpacity(0.22),
-                      size: 36,
+                      Icons.sports_cricket,
+                      color: _DS.accent.withOpacity(0.2),
+                      size: 40,
                     ),
                   ),
                 ],
@@ -1261,72 +670,6 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
   }
 
-  // ── NEW: Quick Action Panel ─────────────────────────────────────────────────
-  Widget _buildQuickActionPanel() {
-    final actions = [
-      _QuickAction(
-        icon: Icons.sensors_rounded,
-        label: 'Live\nMatches',
-        color: _DS.live,
-        onTap: () => setState(() => _selectedNavIndex = 2),
-      ),
-      _QuickAction(
-        icon: Icons.emoji_events_rounded,
-        label: 'Tournaments',
-        color: _DS.accent,
-        onTap: () => setState(() => _selectedNavIndex = 1),
-      ),
-      _QuickAction(
-        icon: Icons.refresh_rounded,
-        label: 'Refresh\nData',
-        color: _DS.success,
-        onTap: () {
-          setState(() => _loading = true);
-          _fetchTournaments();
-        },
-      ),
-      _QuickAction(
-        icon: Icons.settings_rounded,
-        label: 'Settings',
-        color: _DS.warning,
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => const SettingsScreen(initialNavIndex: 3),
-          ),
-        ),
-      ),
-    ];
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'QUICK ACTIONS',
-          style: TextStyle(
-            color: Colors.white.withOpacity(0.35),
-            fontSize: 10,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 2.5,
-          ),
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: List.generate(actions.length, (i) {
-            return Expanded(
-              child: Padding(
-                padding:
-                EdgeInsets.only(right: i < actions.length - 1 ? 12 : 0),
-                child: _QuickActionButton(action: actions[i]),
-              ),
-            );
-          }),
-        ),
-      ],
-    );
-  }
-
-  // ── EXISTING: Section Header (UNCHANGED) ──────────────────────────────────
   Widget _buildSectionHeader(String title, int count) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -1335,12 +678,12 @@ class _DashboardScreenState extends State<DashboardScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              title.toUpperCase(),
+              '— ${title.toUpperCase()} —',
               style: TextStyle(
-                color: Colors.white.withOpacity(0.4),
-                fontSize: 10,
+                color: Colors.white.withOpacity(0.3),
+                fontSize: 9,
                 fontWeight: FontWeight.w700,
-                letterSpacing: 3.0,
+                letterSpacing: 3.5,
               ),
             ),
             const SizedBox(height: 4),
@@ -1348,12 +691,12 @@ class _DashboardScreenState extends State<DashboardScreen>
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Text(
-                  title,
+                  title.toUpperCase(),
                   style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 26,
+                    fontSize: 22,
                     fontWeight: FontWeight.w800,
-                    letterSpacing: -0.3,
+                    letterSpacing: 1.5,
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -1361,12 +704,13 @@ class _DashboardScreenState extends State<DashboardScreen>
                   padding: const EdgeInsets.only(bottom: 3),
                   child: Container(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 2),
+                      horizontal: 8,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: _DS.accent.withOpacity(0.12),
                       borderRadius: BorderRadius.circular(10),
-                      border:
-                      Border.all(color: _DS.accent.withOpacity(0.25)),
+                      border: Border.all(color: _DS.accent.withOpacity(0.25)),
                     ),
                     child: Text(
                       '$count',
@@ -1383,16 +727,14 @@ class _DashboardScreenState extends State<DashboardScreen>
           ],
         ),
         const Spacer(),
+        // Decorative line
         Expanded(
           child: Container(
             height: 1,
             margin: const EdgeInsets.only(left: 20),
             decoration: BoxDecoration(
               gradient: LinearGradient(
-                colors: [
-                  _DS.accent.withOpacity(0.3),
-                  Colors.transparent,
-                ],
+                colors: [_DS.accent.withOpacity(0.3), Colors.transparent],
               ),
             ),
           ),
@@ -1401,130 +743,461 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
   }
 
-  // ── EXISTING: Tournament Grid (UNCHANGED) ─────────────────────────────────
-  Widget _buildTournamentGrid() {
-    return AnimatedBuilder(
-      animation: _cardEntranceAnim,
-      builder: (_, __) {
-        return GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 3,
-            crossAxisSpacing: 20,
-            mainAxisSpacing: 20,
-            childAspectRatio: 1.4,
-          ),
-          itemCount: _tournaments.length,
-          itemBuilder: (context, index) {
-            final t = _tournaments[index];
-            final delay = (index / _tournaments.length) * 0.5;
-            final t0 = (_cardEntranceAnim.value - delay)
-                .clamp(0.0, 1.0) /
-                (1.0 - delay + 0.001);
-
-            return Transform.translate(
-              offset: Offset(0, 30 * (1 - t0.clamp(0.0, 1.0))),
-              child: Opacity(
-                opacity: t0.clamp(0.0, 1.0),
-                child: TournamentCardWidget(
-                  tournament: t,
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => TournamentDetailScreen(
-                        tournamentId: t.id,
-                        tournament: t,
-                        sessionId: widget.sessionId,
+  void _showTournamentModal(BuildContext context, TournamentModel t) {
+    showGeneralDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'dismiss',
+      barrierColor: Colors.black.withOpacity(0.75),
+      transitionDuration: const Duration(milliseconds: 280),
+      pageBuilder: (_, __, ___) => const SizedBox.shrink(),
+      transitionBuilder: (ctx, anim, _, __) {
+        final curve = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
+        return FadeTransition(
+          opacity: curve,
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 0.92, end: 1.0).animate(curve),
+            child: Center(
+              child: Material(
+                color: Colors.transparent,
+                child: Container(
+                  width: MediaQuery.of(ctx).size.width * 0.52,
+                  constraints: const BoxConstraints(maxWidth: 640),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0A1628),
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(color: Colors.white.withOpacity(0.08)),
+                    boxShadow: [
+                      BoxShadow(
+                        color: _DS.accent.withOpacity(0.10),
+                        blurRadius: 48,
+                        spreadRadius: 0,
                       ),
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.6),
+                        blurRadius: 32,
+                      ),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Header stripe
+                        Container(
+                          height: 4,
+                          decoration: const BoxDecoration(
+                            gradient: _DS.accentGrad,
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.all(32),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // Title row
+                              Row(
+                                children: [
+                                  Container(
+                                    width: 48,
+                                    height: 48,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: _DS.accent.withOpacity(0.08),
+                                      border: Border.all(
+                                        color: _DS.accent.withOpacity(0.2),
+                                      ),
+                                    ),
+                                    child: Icon(
+                                      Icons.emoji_events_rounded,
+                                      color: _DS.accent,
+                                      size: 22,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 16),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          t.name,
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 20,
+                                            fontWeight: FontWeight.w800,
+                                            letterSpacing: 0.2,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          t.id,
+                                          style: TextStyle(
+                                            color: Colors.white.withOpacity(
+                                              0.3,
+                                            ),
+                                            fontSize: 11,
+                                            letterSpacing: 0.5,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  GestureDetector(
+                                    onTap: () => Navigator.pop(ctx),
+                                    child: Container(
+                                      padding: const EdgeInsets.all(8),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white.withOpacity(0.04),
+                                        borderRadius: BorderRadius.circular(10),
+                                        border: Border.all(
+                                          color: Colors.white.withOpacity(0.08),
+                                        ),
+                                      ),
+                                      child: Icon(
+                                        Icons.close_rounded,
+                                        color: Colors.white.withOpacity(0.4),
+                                        size: 18,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 28),
+                              // Divider
+                              Divider(
+                                color: Colors.white.withOpacity(0.06),
+                                height: 1,
+                              ),
+                              const SizedBox(height: 28),
+                              // Action buttons
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: GestureDetector(
+                                      onTap: () {
+                                        Navigator.pop(ctx);
+                                        Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (_) =>
+                                                TournamentDetailScreen(
+                                                  tournamentId: t.id,
+                                                  tournament: t,
+                                                  sessionId: widget.sessionId,
+                                                ),
+                                          ),
+                                        );
+                                      },
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 14,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          gradient: _DS.accentGrad,
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: _DS.accent.withOpacity(
+                                                0.3,
+                                              ),
+                                              blurRadius: 16,
+                                            ),
+                                          ],
+                                        ),
+                                        child: const Center(
+                                          child: Text(
+                                            'Open Tournament',
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  GestureDetector(
+                                    onTap: () => Navigator.pop(ctx),
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 14,
+                                        horizontal: 20,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white.withOpacity(0.04),
+                                        borderRadius: BorderRadius.circular(12),
+                                        border: Border.all(
+                                          color: Colors.white.withOpacity(0.08),
+                                        ),
+                                      ),
+                                      child: Text(
+                                        'Cancel',
+                                        style: TextStyle(
+                                          color: Colors.white.withOpacity(0.5),
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
               ),
-            );
-          },
+            ),
+          ),
         );
       },
     );
   }
 
-  // ── ENHANCED: Empty State ─────────────────────────────────────────────────
-  Widget _buildEmptyState() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 48),
-        child: Column(
-          children: [
-            // Animated dashed ring
-            AnimatedBuilder(
-              animation: _pulseAnim,
-              builder: (_, __) => SizedBox(
-                width: 120,
-                height: 120,
-                child: CustomPaint(
-                  painter: _DashedCirclePainter(
-                    color: _DS.accent.withOpacity(0.2 + _pulseAnim.value * 0.15),
-                  ),
-                  child: Center(
-                    child: Container(
-                      width: 84,
-                      height: 84,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: _DS.accent.withOpacity(0.04),
-                        border: Border.all(
-                            color: _DS.accent.withOpacity(0.10), width: 1.5),
-                      ),
-                      child: Icon(
-                        Icons.emoji_events_outlined,
-                        color: _DS.accent
-                            .withOpacity(0.2 + _pulseAnim.value * 0.1),
-                        size: 40,
-                      ),
-                    ),
-                  ),
+Widget _buildTournamentRows() {
+    final live = _tournaments
+        .where((t) => t.status.toLowerCase() == 'active')
+        .toList();
+    final upcoming = _tournaments
+        .where((t) => t.status.toLowerCase() == 'upcoming')
+        .toList();
+    final completed = _tournaments
+        .where((t) => t.status.toLowerCase() == 'completed')
+        .toList();
+
+    debugPrint('🟢 Live/Active: ${live.length}');
+    debugPrint('⏳ Upcoming: ${upcoming.length}');
+    debugPrint('✅ Completed: ${completed.length}');
+    for (final t in _tournaments) {
+      debugPrint('  → ${t.name} | status=${t.status} | start=${t.startDate} | end=${t.endDate}');
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+     if (live.isNotEmpty) ...[
+          _buildRowHeader('Live', live.length, _DS.live,
+              Icons.sensors_rounded),
+          const SizedBox(height: 14),
+          _buildHorizontalRow(live),
+          const SizedBox(height: 32),
+        ],
+      if (upcoming.isNotEmpty) ...[
+          _buildRowHeader('Upcoming', upcoming.length, _DS.warning,
+              Icons.event_rounded),
+          const SizedBox(height: 14),
+          _buildHorizontalRow(upcoming),
+          const SizedBox(height: 32),
+        ],
+   if (completed.isNotEmpty) ...[
+          _buildRowHeader('Completed', completed.length, _DS.success,
+              Icons.workspace_premium_rounded),
+          const SizedBox(height: 14),
+          _buildHorizontalRow(completed),
+          const SizedBox(height: 32),
+        ],
+        if (live.isEmpty && upcoming.isEmpty && completed.isEmpty)
+          _buildEmptyState(),
+      ],
+    );
+  }
+
+ Widget _buildRowHeader(String title, int count, Color color, IconData icon) {
+  return Row(
+    children: [
+      // Icon badge
+      Container(
+        width: 34,
+        height: 34,
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.10),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: color.withOpacity(0.25), width: 1),
+        ),
+        child: Icon(icon, color: color, size: 17),
+      ),
+      const SizedBox(width: 12),
+      Text(
+        title,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 16,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 1.2,
+        ),
+      ),
+      const SizedBox(width: 10),
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.12),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: color.withOpacity(0.3)),
+        ),
+        child: Text(
+          '$count',
+          style: TextStyle(
+            color: color,
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+      const SizedBox(width: 16),
+      Expanded(
+        child: Container(
+          height: 1,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [color.withOpacity(0.3), Colors.transparent],
+            ),
+          ),
+        ),
+      ),
+    ],
+  );
+}
+
+Widget _buildHorizontalRow(List<TournamentModel> list) {
+  const cardWidth = 260.0;
+  const cardHeight = 195.0;
+  const maxVisible = 6; // cards shown before "Show More" tile appears
+  final showMore = list.length > maxVisible;
+  final visibleList = showMore ? list.take(maxVisible).toList() : list;
+
+  // total items = visible cards + (1 show-more tile if needed)
+  final itemCount = visibleList.length + (showMore ? 1 : 0);
+
+  return SizedBox(
+    height: cardHeight + 20,
+    child: ScrollConfiguration(
+      behavior: _SilkScrollBehavior(),
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.only(
+          left: 2,
+          right: 24,
+          top: 8,
+          bottom: 8,
+        ),
+        itemCount: itemCount,
+        separatorBuilder: (_, __) => const SizedBox(width: 16),
+        itemBuilder: (context, index) {
+          // ── "Show More" tile at the end ──
+          if (showMore && index == visibleList.length) {
+            return _ShowMoreTile(
+              remaining: list.length - maxVisible,
+              width: cardWidth,
+              height: cardHeight,
+              allTournaments: list,
+              sessionId: widget.sessionId,
+            );
+          }
+
+          final t = visibleList[index];
+          return SizedBox(
+            width: cardWidth,
+            height: cardHeight,
+            // ── Uniform card background — fixes dark/black card issue ──
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: const Color(0xFF0A1628), // _DS.surface
+                borderRadius: BorderRadius.circular(16),
+              ),
+    child: ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: _HoverPreviewCard(
+                  tournament: t,
+                  onTap: () => _showTournamentModal(context, t),
                 ),
               ),
             ),
-            const SizedBox(height: 28),
-            const Text(
+          );
+        },
+      ),
+    ),
+  );
+}
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 72),
+        child: Column(
+          children: [
+            Container(
+              width: 100,
+              height: 100,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: _DS.accent.withOpacity(0.04),
+                border: Border.all(
+                  color: _DS.accent.withOpacity(0.10),
+                  width: 1.5,
+                ),
+              ),
+              child: Icon(
+                Icons.emoji_events_outlined,
+                color: _DS.accent.withOpacity(0.25),
+                size: 44,
+              ),
+            ),
+            const SizedBox(height: 24),
+            Text(
               'No Tournaments Yet',
               style: TextStyle(
-                color: Colors.white,
-                fontSize: 22,
-                fontWeight: FontWeight.w800,
+                color: Colors.white.withOpacity(0.6),
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
               ),
             ),
             const SizedBox(height: 10),
             Text(
-              'Your tournaments will appear here automatically.',
+              'Create a tournament in the CRICTRAX mobile app\nand it will appear here automatically.',
               style: TextStyle(
-                color: Colors.white.withOpacity(0.35),
+                color: Colors.white.withOpacity(0.25),
                 fontSize: 14,
                 height: 1.6,
               ),
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 32),
-            // Step hints
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _EmptyStateStep(
-                    step: '1',
-                    text: 'Open CRICTRAX\non your phone',
-                    color: _DS.accent),
-                _EmptyStateArrow(),
-                _EmptyStateStep(
-                    step: '2',
-                    text: 'Create a\ntournament',
-                    color: _DS.warning),
-                _EmptyStateArrow(),
-                _EmptyStateStep(
-                    step: '3',
-                    text: 'It appears here\nautomatically',
-                    color: _DS.success),
-              ],
+            const SizedBox(height: 28),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              decoration: BoxDecoration(
+                color: _DS.accent.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: _DS.accent.withOpacity(0.2)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.phone_android_rounded,
+                    color: _DS.accent,
+                    size: 16,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Open CRICTRAX on your phone to get started',
+                    style: TextStyle(
+                      color: _DS.accent,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
@@ -1533,301 +1206,8 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 }
 
-// ─── Data models for new widgets ──────────────────────────────────────────────
-
-class _StatCard {
-  final String label;
-  final String value;
-  final IconData icon;
-  final Color color;
-  final LinearGradient gradient;
-  final bool isPulsing;
-
-  const _StatCard({
-    required this.label,
-    required this.value,
-    required this.icon,
-    required this.color,
-    required this.gradient,
-    this.isPulsing = false,
-  });
-}
-
-class _AdSlide {
-  final String tag;
-  final String headline;
-  final String subline;
-  final IconData icon;
-  final Color color;
-
-  const _AdSlide({
-    required this.tag,
-    required this.headline,
-    required this.subline,
-    required this.icon,
-    required this.color,
-  });
-}
-
-class _QuickAction {
-  final IconData icon;
-  final String label;
-  final Color color;
-  final VoidCallback onTap;
-
-  const _QuickAction({
-    required this.icon,
-    required this.label,
-    required this.color,
-    required this.onTap,
-  });
-}
-
-// ─── Quick Action Button ──────────────────────────────────────────────────────
-class _QuickActionButton extends StatefulWidget {
-  final _QuickAction action;
-  const _QuickActionButton({required this.action});
-
-  @override
-  State<_QuickActionButton> createState() => _QuickActionButtonState();
-}
-
-class _QuickActionButtonState extends State<_QuickActionButton>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _ctrl;
-  late Animation<double> _scale;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 120),
-    );
-    _scale = Tween<double>(begin: 1.0, end: 0.94).animate(
-      CurvedAnimation(parent: _ctrl, curve: Curves.easeIn),
-    );
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Focus(
-      child: Builder(builder: (ctx) {
-        final focused = Focus.of(ctx).hasFocus;
-        return GestureDetector(
-          onTapDown: (_) => _ctrl.forward(),
-          onTapUp: (_) {
-            _ctrl.reverse();
-            widget.action.onTap();
-          },
-          onTapCancel: () => _ctrl.reverse(),
-          child: ScaleTransition(
-            scale: _scale,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              height: 64,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(14),
-                color: focused
-                    ? widget.action.color.withOpacity(0.18)
-                    : _DS.surfaceHigh,
-                border: Border.all(
-                  color: focused
-                      ? widget.action.color.withOpacity(0.5)
-                      : widget.action.color.withOpacity(0.15),
-                  width: 1.5,
-                ),
-                boxShadow: focused
-                    ? [
-                  BoxShadow(
-                    color: widget.action.color.withOpacity(0.25),
-                    blurRadius: 20,
-                    spreadRadius: 0,
-                  ),
-                ]
-                    : [],
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    widget.action.icon,
-                    color: widget.action.color,
-                    size: 20,
-                  ),
-                  const SizedBox(width: 10),
-                  Text(
-                    widget.action.label.replaceAll('\n', ' '),
-                    style: TextStyle(
-                      color: focused
-                          ? widget.action.color
-                          : Colors.white.withOpacity(0.7),
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.3,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      }),
-    );
-  }
-}
-
-// ─── News Ticker ──────────────────────────────────────────────────────────────
-class _NewsTicker extends StatelessWidget {
-  final List<String> items;
-  final AnimationController controller;
-
-  const _NewsTicker({required this.items, required this.controller});
-
-  @override
-  Widget build(BuildContext context) {
-    final fullText = items.join('     •     ');
-    return ClipRect(
-      child: AnimatedBuilder(
-        animation: controller,
-        builder: (_, __) {
-          return FractionalTranslation(
-            translation: Offset(1.0 - controller.value * 2.0, 0),
-            child: Text(
-              fullText,
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.45),
-                fontSize: 10,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 0.3,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.visible,
-              softWrap: false,
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-// ─── Empty State Helpers ──────────────────────────────────────────────────────
-class _EmptyStateStep extends StatelessWidget {
-  final String step;
-  final String text;
-  final Color color;
-
-  const _EmptyStateStep(
-      {required this.step, required this.text, required this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 120,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.06),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.18)),
-      ),
-      child: Column(
-        children: [
-          Container(
-            width: 28,
-            height: 28,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: color.withOpacity(0.15),
-              border: Border.all(color: color.withOpacity(0.35)),
-            ),
-            child: Center(
-              child: Text(
-                step,
-                style: TextStyle(
-                  color: color,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            text,
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.5),
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              height: 1.5,
-            ),
-            textAlign: TextAlign.center,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _EmptyStateArrow extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      child: Icon(
-        Icons.arrow_forward_rounded,
-        color: Colors.white.withOpacity(0.15),
-        size: 20,
-      ),
-    );
-  }
-}
-
-// ─── Dashed Circle Painter (for empty state) ──────────────────────────────────
-class _DashedCirclePainter extends CustomPainter {
-  final Color color;
-  _DashedCirclePainter({required this.color});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = color
-      ..strokeWidth = 1.5
-      ..style = PaintingStyle.stroke;
-
-    final center = Offset(size.width / 2, size.height / 2);
-    final radius = size.width / 2 - 2;
-    const dashCount = 24;
-    const dashLength = 2 * math.pi / dashCount;
-
-    for (int i = 0; i < dashCount; i++) {
-      if (i % 2 == 0) {
-        final start = i * dashLength;
-        final end = start + dashLength * 0.55;
-        canvas.drawArc(
-          Rect.fromCircle(center: center, radius: radius),
-          start,
-          end - start,
-          false,
-          paint,
-        );
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(_DashedCirclePainter old) => old.color != color;
-}
-
 // ─── Side Nav Rail ─────────────────────────────────────────────────────────────
-// (UNCHANGED — reproduced exactly)
-class _SideNavRail extends StatelessWidget {
+class _SideNavRail extends StatefulWidget {
   final int selectedIndex;
   final ValueChanged<int> onIndexChanged;
   final VoidCallback onLogout;
@@ -1840,6 +1220,13 @@ class _SideNavRail extends StatelessWidget {
     required this.tournamentCount,
   });
 
+  @override
+  State<_SideNavRail> createState() => _SideNavRailState();
+}
+
+class _SideNavRailState extends State<_SideNavRail> {
+  bool _expanded = false;
+
   static const _items = [
     (icon: Icons.home_rounded, label: 'Home'),
     (icon: Icons.emoji_events_rounded, label: 'Events'),
@@ -1849,87 +1236,126 @@ class _SideNavRail extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: _DS.navWidth,
-      decoration: BoxDecoration(
-        color: _DS.surface.withOpacity(0.6),
-        border: Border(
-          right: BorderSide(
-            color: Colors.white.withOpacity(0.05),
-            width: 1,
+    return MouseRegion(
+      onEnter: (_) => setState(() => _expanded = true),
+      onExit: (_) => setState(() => _expanded = false),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+        width: _expanded ? _DS.navWidthExpanded : _DS.navWidthCollapsed,
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.centerLeft,
+            end: Alignment.centerRight,
+            colors: _expanded
+                ? [
+                    Colors.black.withOpacity(0.52),
+                    Colors.black.withOpacity(0.28),
+                    Colors.transparent,
+                  ]
+                : [Colors.black.withOpacity(0.22), Colors.transparent],
+            stops: _expanded ? const [0.0, 0.65, 1.0] : const [0.0, 1.0],
           ),
         ),
-      ),
-      child: Column(
-        children: [
-          const SizedBox(height: 36),
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              gradient: _DS.accentGrad,
-              boxShadow: [
-                BoxShadow(
-                  color: _DS.accent.withOpacity(0.35),
-                  blurRadius: 16,
-                  spreadRadius: 1,
-                ),
-              ],
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 36),
+            // Logo mark — shrinks slightly when collapsed
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    width: _expanded ? 40 : 36,
+                    height: _expanded ? 40 : 36,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      gradient: _DS.accentGrad,
+                      boxShadow: [
+                        BoxShadow(
+                          color: _DS.accent.withOpacity(0.35),
+                          blurRadius: 16,
+                          spreadRadius: 1,
+                        ),
+                      ],
+                    ),
+                    child: Icon(
+                      Icons.sports_cricket,
+                      color: Colors.white,
+                      size: _expanded ? 20 : 18,
+                    ),
+                  ),
+                  AnimatedSize(
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeOut,
+                    child: _expanded
+                        ? Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const SizedBox(width: 12),
+                              Text(
+                                'CRICTRAX',
+                                style: TextStyle(
+                                  color: _DS.accent,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 1.8,
+                                ),
+                              ),
+                            ],
+                          )
+                        : const SizedBox.shrink(),
+                  ),
+                ],
+              ),
             ),
-            child: const Icon(
-              Icons.sports_cricket,
-              color: Colors.white,
-              size: 22,
+            const SizedBox(height: 40),
+
+            // Nav items
+            ...List.generate(_items.length, (i) {
+              final item = _items[i];
+              return _NavItem(
+                icon: item.icon,
+                label: item.label,
+                isSelected: widget.selectedIndex == i,
+                expanded: _expanded,
+                onTap: () => widget.onIndexChanged(i),
+              );
+            }),
+
+            const Spacer(),
+
+            // Divider
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Divider(color: Colors.white.withOpacity(0.06), height: 1),
             ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'CRICTRAX',
-            style: TextStyle(
-              color: _DS.accent,
-              fontSize: 7,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 1.8,
+            const SizedBox(height: 16),
+
+            // Logout
+            _NavItem(
+              icon: Icons.logout_rounded,
+              label: 'Logout',
+              isSelected: false,
+              expanded: _expanded,
+              onTap: widget.onLogout,
+              isDanger: true,
             ),
-          ),
-          const SizedBox(height: 40),
-          ...List.generate(_items.length, (i) {
-            final item = _items[i];
-            return _NavItem(
-              icon: item.icon,
-              label: item.label,
-              isSelected: selectedIndex == i,
-              onTap: () => onIndexChanged(i),
-            );
-          }),
-          const Spacer(),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Divider(
-              color: Colors.white.withOpacity(0.06),
-              height: 1,
-            ),
-          ),
-          const SizedBox(height: 16),
-          _NavItem(
-            icon: Icons.logout_rounded,
-            label: 'Logout',
-            isSelected: false,
-            onTap: onLogout,
-            isDanger: true,
-          ),
-          const SizedBox(height: 28),
-        ],
+            const SizedBox(height: 28),
+          ],
+        ),
       ),
     );
   }
 }
 
-class _NavItem extends StatelessWidget {
+class _NavItem extends StatefulWidget {
   final IconData icon;
   final String label;
   final bool isSelected;
+  final bool expanded;
   final VoidCallback onTap;
   final bool isDanger;
 
@@ -1937,29 +1363,45 @@ class _NavItem extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.isSelected,
+    required this.expanded,
     required this.onTap,
     this.isDanger = false,
   });
 
   @override
+  State<_NavItem> createState() => _NavItemState();
+}
+
+class _NavItemState extends State<_NavItem> {
+  bool _hovered = false;
+
+  @override
   Widget build(BuildContext context) {
+    final active = widget.isSelected;
+    final hovered = _hovered && !active;
+ final activeColor = widget.isDanger ? _DS.danger : _DS.accent;
+    final hoverColor = Colors.transparent;
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
-      child: Focus(
-        child: Builder(builder: (ctx) {
-          final focused = Focus.of(ctx).hasFocus;
-          final active = isSelected || focused;
-          final activeColor = isDanger ? _DS.danger : _DS.accent;
-
-          return GestureDetector(
-            onTap: onTap,
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          onTap: widget.onTap,
+          child: AnimatedOpacity(
+            opacity: active ? 1.0 : (_hovered ? 1.0 : 0.72),
+            duration: const Duration(milliseconds: 150),
             child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
+              duration: const Duration(milliseconds: 150),
               curve: Curves.easeOut,
               margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
-              padding:
-              const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
-              decoration: BoxDecoration(
+              padding: EdgeInsets.symmetric(
+                vertical: widget.expanded ? 12 : 10,
+                horizontal: widget.expanded ? 14 : 4,
+              ),
+         decoration: BoxDecoration(
                 color: active
                     ? activeColor.withOpacity(0.12)
                     : Colors.transparent,
@@ -1970,48 +1412,313 @@ class _NavItem extends StatelessWidget {
                       : Colors.transparent,
                   width: 1,
                 ),
-                boxShadow: active && !isDanger
+                boxShadow: active && !widget.isDanger
                     ? [
-                  BoxShadow(
-                    color: activeColor.withOpacity(0.2),
-                    blurRadius: 12,
-                    spreadRadius: 0,
-                  )
-                ]
+                        BoxShadow(
+                          color: activeColor.withOpacity(0.2),
+                          blurRadius: 12,
+                          spreadRadius: 0,
+                        ),
+                      ]
                     : [],
               ),
-              child: Column(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(
-                    icon,
-                    color: active
-                        ? activeColor
-                        : Colors.white.withOpacity(0.28),
-                    size: 24,
-                  ),
-                  const SizedBox(height: 5),
-                  Text(
-                    label,
-                    style: TextStyle(
+                  // Icon with its own hover highlight — tight fit
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: _hovered && !active
+                          ? Colors.white.withOpacity(0.08)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(
+                      widget.icon,
                       color: active
                           ? activeColor
-                          : Colors.white.withOpacity(0.28),
-                      fontSize: 9,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.8,
+                          : _hovered
+                          ? Colors.white
+                          : Colors.white.withOpacity(0.55),
+                      size: widget.expanded ? 20 : 22,
+                    ),
+                  ),
+                  AnimatedSize(
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeOut,
+                    child: widget.expanded
+                        ? Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const SizedBox(width: 8),
+                              AnimatedDefaultTextStyle(
+                                duration: const Duration(milliseconds: 150),
+                                style: TextStyle(
+                                  color: active
+                                      ? activeColor
+                                      : _hovered
+                                      ? Colors.white
+                                      : Colors.white.withOpacity(0.55),
+                                  fontSize: 13,
+                                  fontWeight: _hovered || active
+                                      ? FontWeight.w700
+                                      : FontWeight.w500,
+                                  letterSpacing: 0.3,
+                                ),
+                                child: Text(widget.label),
+                              ),
+                            ],
+                          )
+                        : const SizedBox.shrink(),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Hover Preview Card ───────────────────────────────────────────────────────
+// ─── Hover Preview Card ───────────────────────────────────────────────────────
+class _HoverPreviewCard extends StatefulWidget {
+  final TournamentModel tournament;
+  final VoidCallback onTap;
+
+  const _HoverPreviewCard({required this.tournament, required this.onTap});
+
+  @override
+  State<_HoverPreviewCard> createState() => _HoverPreviewCardState();
+}
+
+class _HoverPreviewCardState extends State<_HoverPreviewCard>
+    with SingleTickerProviderStateMixin {
+  bool _hovered = false;
+  late AnimationController _ctrl;
+  late Animation<double> _scaleAnim;
+  late Animation<double> _fadeAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 200),
+    );
+    _scaleAnim = Tween<double>(
+      begin: 1.0,
+      end: 1.06,
+    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic));
+    _fadeAnim = CurvedAnimation(parent: _ctrl, curve: Curves.easeOut);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  void _onEnter(_) {
+    setState(() => _hovered = true);
+    _ctrl.forward();
+  }
+
+  void _onExit(_) {
+    _ctrl.reverse().then((_) {
+      if (mounted) setState(() => _hovered = false);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.tournament;
+    final teamColor = _DS.teamColor(t.name);
+
+    return MouseRegion(
+      onEnter: _onEnter,
+      onExit: _onExit,
+      cursor: SystemMouseCursors.click,
+      child: AnimatedBuilder(
+        animation: _ctrl,
+        builder: (_, __) {
+          return Transform.scale(
+            scale: _scaleAnim.value,
+            child: GestureDetector(
+              onTap: widget.onTap,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  // ── Base card with animated border + shadow ──
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeOut,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: _hovered
+                            ? teamColor.withOpacity(0.7)
+                            : Colors.white.withOpacity(0.06),
+                        width: _hovered ? 2 : 1,
+                      ),
+                      boxShadow: _hovered
+                          ? [
+                              BoxShadow(
+                                color: teamColor.withOpacity(0.25),
+                                blurRadius: 28,
+                                spreadRadius: 2,
+                                offset: const Offset(0, 6),
+                              ),
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.5),
+                                blurRadius: 20,
+                                offset: const Offset(0, 8),
+                              ),
+                            ]
+                          : [],
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: Stack(
+                        children: [
+                          // The actual card widget
+                          TournamentCardWidget(
+                            tournament: t,
+                            onTap: widget.onTap,
+                          ),
+                          // Overlay that fades in on hover — darkens card
+                          // so the action button stands out
+                          if (_hovered)
+                            Positioned.fill(
+                              child: FadeTransition(
+                                opacity: _fadeAnim,
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      begin: Alignment.topCenter,
+                                      end: Alignment.bottomCenter,
+                                      colors: [
+                                        Colors.black.withOpacity(0.15),
+                                        Colors.black.withOpacity(0.55),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          // Top accent bar that slides in
+                          if (_hovered)
+                            Positioned(
+                              top: 0,
+                              left: 0,
+                              right: 0,
+                              child: FadeTransition(
+                                opacity: _fadeAnim,
+                                child: Container(
+                                  height: 3,
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      colors: [teamColor, _DS.accent],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          // Bottom action strip
+                          if (_hovered)
+                            Positioned(
+                              bottom: 0,
+                              left: 0,
+                              right: 0,
+                              child: FadeTransition(
+                                opacity: _fadeAnim,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 14,
+                                    vertical: 10,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      begin: Alignment.topCenter,
+                                      end: Alignment.bottomCenter,
+                                      colors: [
+                                        Colors.transparent,
+                                        Colors.black.withOpacity(0.8),
+                                      ],
+                                    ),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            vertical: 8,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            gradient: LinearGradient(
+                                              colors: [
+                                                _DS.accent.withOpacity(0.95),
+                                                _DS.accentDim,
+                                              ],
+                                            ),
+                                            borderRadius: BorderRadius.circular(
+                                              8,
+                                            ),
+                                            boxShadow: [
+                                              BoxShadow(
+                                                color: _DS.accent.withOpacity(
+                                                  0.35,
+                                                ),
+                                                blurRadius: 12,
+                                              ),
+                                            ],
+                                          ),
+                                          child: const Row(
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
+                                            children: [
+                                              Icon(
+                                                Icons.play_arrow_rounded,
+                                                color: Colors.white,
+                                                size: 14,
+                                              ),
+                                              SizedBox(width: 5),
+                                              Text(
+                                                'Open',
+                                                style: TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.w700,
+                                                  letterSpacing: 0.3,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
                     ),
                   ),
                 ],
               ),
             ),
           );
-        }),
+        },
       ),
     );
   }
 }
 
-// ─── Stat Chip (UNCHANGED) ────────────────────────────────────────────────────
+// ─── Stat Chip ────────────────────────────────────────────────────────────────
 class _StatChip extends StatelessWidget {
   final IconData icon;
   final String label;
@@ -2033,13 +1740,13 @@ class _StatChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final iconWidget = pulse && pulseAnim != null
         ? AnimatedBuilder(
-      animation: pulseAnim!,
-      builder: (_, __) => Icon(
-        Icons.circle,
-        color: color.withOpacity(pulseAnim!.value),
-        size: 8,
-      ),
-    )
+            animation: pulseAnim!,
+            builder: (_, __) => Icon(
+              Icons.circle,
+              color: color.withOpacity(pulseAnim!.value),
+              size: 8,
+            ),
+          )
         : Icon(icon, color: color, size: 14);
 
     return Container(
@@ -2084,7 +1791,127 @@ class _StatChip extends StatelessWidget {
   }
 }
 
-// ─── Loading Screen (UNCHANGED) ───────────────────────────────────────────────
+// ─── Score Flash Chip (animates on value change) ───────────────────────────────
+class _ScoreFlashChip extends StatefulWidget {
+  final IconData icon;
+  final String label;
+  final String sublabel;
+  final Color color;
+
+  const _ScoreFlashChip({
+    required this.icon,
+    required this.label,
+    required this.sublabel,
+    required this.color,
+  });
+
+  @override
+  State<_ScoreFlashChip> createState() => _ScoreFlashChipState();
+}
+
+class _ScoreFlashChipState extends State<_ScoreFlashChip>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _flashCtrl;
+  late Animation<double> _flashAnim;
+  String? _prevLabel;
+
+  @override
+  void initState() {
+    super.initState();
+    _flashCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    );
+    _flashAnim = CurvedAnimation(parent: _flashCtrl, curve: Curves.easeOut);
+    _prevLabel = widget.label;
+  }
+
+  @override
+  void didUpdateWidget(_ScoreFlashChip old) {
+    super.didUpdateWidget(old);
+    if (old.label != widget.label) {
+      _flashCtrl.forward(from: 0);
+      _prevLabel = widget.label;
+    }
+  }
+
+  @override
+  void dispose() {
+    _flashCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _flashAnim,
+      builder: (_, child) {
+        final glow = _flashAnim.value;
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            color: widget.color.withOpacity(0.08 + glow * 0.10),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: widget.color.withOpacity(0.2 + glow * 0.4),
+              width: 1,
+            ),
+            boxShadow: glow > 0.01
+                ? [
+                    BoxShadow(
+                      color: const Color(0xFFFFD700).withOpacity(glow * 0.55),
+                      blurRadius: 18 * glow,
+                      spreadRadius: 2 * glow,
+                    ),
+                  ]
+                : [],
+          ),
+          child: child,
+        );
+      },
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(widget.icon, color: widget.color, size: 14),
+          const SizedBox(width: 8),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AnimatedBuilder(
+                animation: _flashAnim,
+                builder: (_, __) => Text(
+                  widget.label,
+                  style: TextStyle(
+                    color: Color.lerp(
+                      widget.color,
+                      const Color(0xFFFFD700),
+                      _flashAnim.value,
+                    ),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    height: 1.1,
+                  ),
+                ),
+              ),
+              Text(
+                widget.sublabel,
+                style: TextStyle(
+                  color: widget.color.withOpacity(0.6),
+                  fontSize: 9,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Loading Screen ───────────────────────────────────────────────────────────
 class _LoadingScreen extends StatefulWidget {
   @override
   State<_LoadingScreen> createState() => _LoadingScreenState();
@@ -2099,8 +1926,9 @@ class _LoadingScreenState extends State<_LoadingScreen>
   void initState() {
     super.initState();
     _ctrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 800))
-      ..repeat(reverse: true);
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    )..repeat(reverse: true);
     _fade = CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut);
   }
 
@@ -2132,8 +1960,11 @@ class _LoadingScreenState extends State<_LoadingScreen>
                   ),
                 ],
               ),
-              child: const Icon(Icons.sports_cricket,
-                  color: Colors.white, size: 38),
+              child: const Icon(
+                Icons.sports_cricket,
+                color: Colors.white,
+                size: 38,
+              ),
             ),
             const SizedBox(height: 20),
             Text(
@@ -2186,7 +2017,7 @@ class _LoadingScreenState extends State<_LoadingScreen>
   }
 }
 
-// ─── Forced Logout Dialog (UNCHANGED) ─────────────────────────────────────────
+// ─── Forced Logout Dialog ─────────────────────────────────────────────────────
 class _ForcedLogoutDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
@@ -2203,7 +2034,9 @@ class _ForcedLogoutDialog extends StatelessWidget {
               color: const Color(0xFF0D1117).withOpacity(0.92),
               borderRadius: BorderRadius.circular(28),
               border: Border.all(
-                  color: _DS.danger.withOpacity(0.2), width: 1.5),
+                color: _DS.danger.withOpacity(0.2),
+                width: 1.5,
+              ),
               boxShadow: [
                 BoxShadow(
                   color: _DS.danger.withOpacity(0.15),
@@ -2222,9 +2055,15 @@ class _ForcedLogoutDialog extends StatelessWidget {
                     shape: BoxShape.circle,
                     color: _DS.danger.withOpacity(0.08),
                     border: Border.all(
-                        color: _DS.danger.withOpacity(0.25), width: 1.5),
+                      color: _DS.danger.withOpacity(0.25),
+                      width: 1.5,
+                    ),
                   ),
-                  child: Icon(Icons.logout_rounded, color: _DS.danger, size: 32),
+                  child: Icon(
+                    Icons.logout_rounded,
+                    color: _DS.danger,
+                    size: 32,
+                  ),
                 ),
                 const SizedBox(height: 28),
                 const Text(
@@ -2264,7 +2103,7 @@ class _ForcedLogoutDialog extends StatelessWidget {
   }
 }
 
-// ─── Logout Confirm Dialog (UNCHANGED) ────────────────────────────────────────
+// ─── Logout Confirm Dialog ────────────────────────────────────────────────────
 class _LogoutDialog extends StatelessWidget {
   final VoidCallback onConfirm;
   final VoidCallback onCancel;
@@ -2287,10 +2126,7 @@ class _LogoutDialog extends StatelessWidget {
               borderRadius: BorderRadius.circular(24),
               border: Border.all(color: Colors.white.withOpacity(0.08)),
               boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.6),
-                  blurRadius: 40,
-                ),
+                BoxShadow(color: Colors.black.withOpacity(0.6), blurRadius: 40),
               ],
             ),
             child: Column(
@@ -2305,8 +2141,11 @@ class _LogoutDialog extends StatelessWidget {
                         color: _DS.danger.withOpacity(0.1),
                         borderRadius: BorderRadius.circular(10),
                       ),
-                      child: Icon(Icons.logout_rounded,
-                          color: _DS.danger, size: 20),
+                      child: Icon(
+                        Icons.logout_rounded,
+                        color: _DS.danger,
+                        size: 20,
+                      ),
                     ),
                     const SizedBox(width: 14),
                     const Text(
@@ -2333,86 +2172,92 @@ class _LogoutDialog extends StatelessWidget {
                   children: [
                     Expanded(
                       child: Focus(
-                        child: Builder(builder: (ctx) {
-                          final f = Focus.of(ctx).hasFocus;
-                          return GestureDetector(
-                            onTap: onCancel,
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 150),
-                              padding:
-                              const EdgeInsets.symmetric(vertical: 14),
-                              decoration: BoxDecoration(
-                                color: f
-                                    ? Colors.white.withOpacity(0.1)
-                                    : Colors.white.withOpacity(0.04),
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                  color: f
-                                      ? Colors.white.withOpacity(0.3)
-                                      : Colors.white.withOpacity(0.08),
+                        child: Builder(
+                          builder: (ctx) {
+                            final f = Focus.of(ctx).hasFocus;
+                            return GestureDetector(
+                              onTap: onCancel,
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 150),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 14,
                                 ),
-                              ),
-                              child: Center(
-                                child: Text(
-                                  'Cancel',
-                                  style: TextStyle(
-                                    color: Colors.white.withOpacity(0.6),
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w600,
+                                decoration: BoxDecoration(
+                                  color: f
+                                      ? Colors.white.withOpacity(0.1)
+                                      : Colors.white.withOpacity(0.04),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: f
+                                        ? Colors.white.withOpacity(0.3)
+                                        : Colors.white.withOpacity(0.08),
+                                  ),
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    'Cancel',
+                                    style: TextStyle(
+                                      color: Colors.white.withOpacity(0.6),
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
-                          );
-                        }),
+                            );
+                          },
+                        ),
                       ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Focus(
-                        child: Builder(builder: (ctx) {
-                          final f = Focus.of(ctx).hasFocus;
-                          return GestureDetector(
-                            onTap: onConfirm,
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 150),
-                              padding:
-                              const EdgeInsets.symmetric(vertical: 14),
-                              decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  colors: f
-                                      ? [
-                                    const Color(0xFFFF5252),
-                                    const Color(0xFFCC0000)
-                                  ]
-                                      : [
-                                    _DS.danger.withOpacity(0.8),
-                                    const Color(0xFF990000)
-                                  ],
+                        child: Builder(
+                          builder: (ctx) {
+                            final f = Focus.of(ctx).hasFocus;
+                            return GestureDetector(
+                              onTap: onConfirm,
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 150),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 14,
                                 ),
-                                borderRadius: BorderRadius.circular(12),
-                                boxShadow: f
-                                    ? [
-                                  BoxShadow(
-                                    color: _DS.danger.withOpacity(0.4),
-                                    blurRadius: 16,
-                                  )
-                                ]
-                                    : [],
-                              ),
-                              child: const Center(
-                                child: Text(
-                                  'Sign Out',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w700,
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    colors: f
+                                        ? [
+                                            const Color(0xFFFF5252),
+                                            const Color(0xFFCC0000),
+                                          ]
+                                        : [
+                                            _DS.danger.withOpacity(0.8),
+                                            const Color(0xFF990000),
+                                          ],
+                                  ),
+                                  borderRadius: BorderRadius.circular(12),
+                                  boxShadow: f
+                                      ? [
+                                          BoxShadow(
+                                            color: _DS.danger.withOpacity(0.4),
+                                            blurRadius: 16,
+                                          ),
+                                        ]
+                                      : [],
+                                ),
+                                child: const Center(
+                                  child: Text(
+                                    'Sign Out',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w700,
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
-                          );
-                        }),
+                            );
+                          },
+                        ),
                       ),
                     ),
                   ],
@@ -2426,7 +2271,7 @@ class _LogoutDialog extends StatelessWidget {
   }
 }
 
-// ─── Ambient Glow (UNCHANGED) ─────────────────────────────────────────────────
+// ─── Ambient Glow ─────────────────────────────────────────────────────────────
 class _AmbientGlow extends StatelessWidget {
   final Color color;
   final double size;
@@ -2452,7 +2297,7 @@ class _AmbientGlow extends StatelessWidget {
   }
 }
 
-// ─── Grid Pattern Painter (UNCHANGED) ─────────────────────────────────────────
+// ─── Grid Pattern Painter ─────────────────────────────────────────────────────
 class _GridPatternPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
@@ -2471,4 +2316,330 @@ class _GridPatternPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_GridPatternPainter _) => false;
+}
+
+// ─── Crowd Waveform Painter ────────────────────────────────────────────────────
+class _CrowdWaveformPainter extends CustomPainter {
+  final double phase;
+  const _CrowdWaveformPainter(this.phase);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final bars = 80;
+    final barW = size.width / bars;
+    final cx = size.height / 2;
+    final rng = math.Random(42);
+
+    for (int i = 0; i < bars; i++) {
+      // Each bar has a base height + animated offset that mimics crowd noise
+      final base = rng.nextDouble() * 0.28 + 0.04;
+      final wave1 = math.sin(phase * 2 * math.pi + i * 0.18) * 0.10;
+      final wave2 = math.sin(phase * 2 * math.pi * 0.7 + i * 0.42) * 0.06;
+      final h = (base + wave1 + wave2).clamp(0.02, 0.55) * size.height;
+
+      final x = i * barW + barW * 0.15;
+      final opacity = (0.04 + (h / size.height) * 0.10).clamp(0.0, 0.14);
+
+      final paint = Paint()
+        ..color = const Color(0xFF00D4FF).withOpacity(opacity)
+        ..strokeCap = StrokeCap.round
+        ..strokeWidth = barW * 0.55;
+
+      // Mirror top + bottom for stadium feel
+      canvas.drawLine(Offset(x, cx - h / 2), Offset(x, cx + h / 2), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_CrowdWaveformPainter old) => old.phase != phase;
+}
+// ─── Show More Tile ───────────────────────────────────────────────────────────
+class _ShowMoreTile extends StatefulWidget {
+  final int remaining;
+  final double width;
+  final double height;
+  final List<TournamentModel> allTournaments;
+  final String? sessionId;
+
+  const _ShowMoreTile({
+    required this.remaining,
+    required this.width,
+    required this.height,
+    required this.allTournaments,
+    required this.sessionId,
+  });
+
+  @override
+  State<_ShowMoreTile> createState() => _ShowMoreTileState();
+}
+
+class _ShowMoreTileState extends State<_ShowMoreTile> {
+  bool _hovered = false;
+
+  void _showAllSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => DraggableScrollableSheet(
+        initialChildSize: 0.75,
+        maxChildSize: 0.95,
+        minChildSize: 0.4,
+        builder: (ctx, scrollCtrl) {
+          return Container(
+            decoration: const BoxDecoration(
+              color: Color(0xFF0A1628),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            child: Column(
+              children: [
+                // Handle
+                Container(
+                  margin: const EdgeInsets.only(top: 12),
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Row(
+                    children: [
+                      Text(
+                        'ALL TOURNAMENTS',
+                        style: TextStyle(
+                          color: _DS.accent,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 2,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: _DS.accent.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: _DS.accent.withOpacity(0.3),
+                          ),
+                        ),
+                        child: Text(
+                          '${widget.allTournaments.length}',
+                          style: TextStyle(
+                            color: _DS.accent,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Divider(
+                  color: Colors.white.withOpacity(0.06),
+                  height: 1,
+                ),
+                Expanded(
+                  child: ListView.separated(
+                    controller: scrollCtrl,
+                    padding: const EdgeInsets.all(20),
+                    itemCount: widget.allTournaments.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 12),
+                    itemBuilder: (ctx2, i) {
+                      final t = widget.allTournaments[i];
+                      return GestureDetector(
+                        onTap: () {
+                          Navigator.pop(ctx2);
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => TournamentDetailScreen(
+                                tournamentId: t.id,
+                                tournament: t,
+                                sessionId: widget.sessionId,
+                              ),
+                            ),
+                          );
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 18,
+                            vertical: 16,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0F1E35),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                              color: Colors.white.withOpacity(0.06),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 40,
+                                height: 40,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: _DS.teamColor(
+                                    t.name,
+                                  ).withOpacity(0.15),
+                                  border: Border.all(
+                                    color: _DS.teamColor(
+                                      t.name,
+                                    ).withOpacity(0.4),
+                                  ),
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    t.name.isNotEmpty
+                                        ? t.name[0].toUpperCase()
+                                        : '?',
+                                    style: TextStyle(
+                                      color: _DS.teamColor(t.name),
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 16,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 14),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      t.name,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      t.city,
+                                      style: TextStyle(
+                                        color: Colors.white.withOpacity(0.4),
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: _DS.accent.withOpacity(0.08),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                    color: _DS.accent.withOpacity(0.2),
+                                  ),
+                                ),
+                                child: Text(
+                                  t.status,
+                                  style: TextStyle(
+                                    color: _DS.accent,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Icon(
+                                Icons.chevron_right_rounded,
+                                color: Colors.white.withOpacity(0.3),
+                                size: 20,
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: () => _showAllSheet(context),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          width: widget.width,
+          height: widget.height,
+          decoration: BoxDecoration(
+            color: _hovered
+                ? _DS.accent.withOpacity(0.08)
+                : const Color(0xFF0A1628),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: _hovered
+                  ? _DS.accent.withOpacity(0.4)
+                  : Colors.white.withOpacity(0.06),
+              width: _hovered ? 2 : 1,
+            ),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: _DS.accent.withOpacity(0.08),
+                  border: Border.all(color: _DS.accent.withOpacity(0.25)),
+                ),
+                child: Icon(
+                  Icons.keyboard_arrow_down_rounded,
+                  color: _DS.accent,
+                  size: 26,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                '+${widget.remaining} more',
+                style: TextStyle(
+                  color: _DS.accent,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.3,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'View all',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.35),
+                  fontSize: 11,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

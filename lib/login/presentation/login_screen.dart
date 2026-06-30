@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:crictrax/splash/presentation/stadium_splash_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:uuid/uuid.dart';
@@ -414,12 +415,12 @@ class _TvQrSectionState extends State<TvQrSection>
 
         setState(() => _linking = true);
 
-        Future.delayed(const Duration(seconds: 2), () {
+      Future.delayed(const Duration(seconds: 2), () {
           if (mounted) {
             Navigator.of(context).pushReplacement(
               PageRouteBuilder(
-                transitionDuration: const Duration(milliseconds: 800),
-                pageBuilder: (_, __, ___) => DashboardScreen(
+                transitionDuration: const Duration(milliseconds: 600),
+                pageBuilder: (_, __, ___) => StadiumSplashScreen(
                   userId: userId,
                   displayName: displayName,
                   email: email,
