@@ -6,7 +6,10 @@ import 'widgets/ad_banner_widget.dart';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 
+import 'widgets/match_card_widget.dart';
+
 import '../ data/models/repositories/dashboard_repository.dart';
+import 'package:crictrax/dashboard/data/models/match_model.dart';
 import '../ data/models/tournament_model.dart';
 import '../../login/presentation/login_screen.dart';
 import '../../tournament_detail/presentation/tournament_detail_screen.dart';
@@ -153,6 +156,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   bool _loading = true;
   int _selectedNavIndex = 0;
   StreamSubscription? _logoutSub;
+  late final Stream<List<MatchModel>> _localMatchesStream; // NEW
 
   // Drives ad-banner collapse/fade on scroll
   final ScrollController _scrollCtrl = ScrollController();
@@ -187,6 +191,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       vsync: this,
       duration: const Duration(seconds: 4),
     )..repeat();
+  _localMatchesStream = _repo.watchLocalMatches(widget.userId).asBroadcastStream(); // NEW — broadcast so multiple listens (tab switches) don't crash
     _fetchTournaments();
     _listenForLogout();
   }
@@ -406,6 +411,8 @@ void _onScroll() {
     );
   }
 
+  
+
   Widget _buildMainContent() {
     return Padding(
       padding: const EdgeInsets.only(top: 24, left: 40, right: 48, bottom: 24),
@@ -436,12 +443,36 @@ void _onScroll() {
                   ],
                 ),
               ),
-_buildSectionHeader('My Tournaments', _tournaments.length),
-              const SizedBox(height: 28),
-              _tournaments.isEmpty
-                  ? _buildEmptyState()
-                  : _buildTournamentRows(),
-              const SizedBox(height: 40),
+if (_selectedNavIndex == 1) ...[
+                _buildSectionHeader('Local Matches', 0),
+                const SizedBox(height: 28),
+                StreamBuilder<List<MatchModel>>(
+                  stream: _localMatchesStream,
+                  builder: (context, snapshot) {
+                    final matches = snapshot.data ?? [];
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 40),
+                        child: Center(
+                          child: CircularProgressIndicator(
+                            color: Color(0xFF00D4FF),
+                          ),
+                        ),
+                      );
+                    }
+                    if (matches.isEmpty) return _buildEmptyMatchesState();
+                    return _buildMatchRows(matches);
+                  },
+                ),
+                const SizedBox(height: 40),
+              ] else ...[
+                _buildSectionHeader('My Tournaments', _tournaments.length),
+                const SizedBox(height: 28),
+                _tournaments.isEmpty
+                    ? _buildEmptyState()
+                    : _buildTournamentRows(),
+                const SizedBox(height: 40),
+              ],
             ],
           ),
         ),
@@ -1204,6 +1235,87 @@ Widget _buildHorizontalRow(List<TournamentModel> list) {
       ),
     );
   }
+
+  // ── My Matches (local, real-time) ───────────────────────────────────────
+
+  Widget _buildMatchRows(List<MatchModel> matches) {
+    final ongoing = matches.where((m) => !m.isCompleted).toList();
+    final completed = matches.where((m) => m.isCompleted).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (ongoing.isNotEmpty) ...[
+          _buildRowHeader(
+            'Ongoing',
+            ongoing.length,
+            _DS.live,
+            Icons.sensors_rounded,
+          ),
+          const SizedBox(height: 14),
+          _buildMatchHorizontalRow(ongoing),
+          const SizedBox(height: 32),
+        ],
+        if (completed.isNotEmpty) ...[
+          _buildRowHeader(
+            'Completed',
+            completed.length,
+            _DS.success,
+            Icons.workspace_premium_rounded,
+          ),
+          const SizedBox(height: 14),
+          _buildMatchHorizontalRow(completed),
+          const SizedBox(height: 32),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildMatchHorizontalRow(List<MatchModel> list) {
+    const cardWidth = 220.0;
+    const cardHeight = 195.0;
+    return SizedBox(
+      height: cardHeight + 20,
+      child: ScrollConfiguration(
+        behavior: _SilkScrollBehavior(),
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.only(
+            left: 2,
+            right: 24,
+            top: 8,
+            bottom: 8,
+          ),
+          itemCount: list.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 16),
+          itemBuilder: (context, index) {
+            final m = list[index];
+            return SizedBox(
+              width: cardWidth,
+              height: cardHeight,
+              child: MatchCardWidget(
+                match: m,
+                onTap: () {
+                  // TODO: navigate to MatchDetailScreen once its constructor is confirmed
+                },
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyMatchesState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 48),
+        child: Text(
+          'No matches yet — start one in the CRICTRAX mobile app.',
+          style: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 14),
+        ),
+      ),
+    );
+  }
 }
 
 // ─── Side Nav Rail ─────────────────────────────────────────────────────────────
@@ -1229,7 +1341,7 @@ class _SideNavRailState extends State<_SideNavRail> {
 
   static const _items = [
     (icon: Icons.home_rounded, label: 'Home'),
-    (icon: Icons.emoji_events_rounded, label: 'Events'),
+    (icon: Icons.emoji_events_rounded, label: 'Local'),
     (icon: Icons.play_circle_fill_rounded, label: 'Live'),
     (icon: Icons.settings_rounded, label: 'Settings'),
   ];
