@@ -24,7 +24,7 @@ class BackgroundMusicService {
 
     await player.setLoopMode(LoopMode.all);
 
-    await player.setVolume(0.20); // 20% volume (recommended)
+    await player.setVolume(0.10); // 20% volume (recommended)
 
     _started = true;
 
