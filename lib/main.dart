@@ -58,7 +58,6 @@ class CricketApp extends StatelessWidget {
           ),
         ),
       ),
-
       home: const CinematicSplash(),
     );
   }

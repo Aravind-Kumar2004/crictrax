@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'package:crictrax/dashboard/%20data/models/match_model.dart';
 import 'package:flutter/physics.dart';
 
 import '../../services/background_music_service.dart';
@@ -10,7 +11,7 @@ import 'package:flutter/material.dart';
 import 'widgets/match_card_widget.dart';
 
 import '../ data/models/repositories/dashboard_repository.dart';
-import 'package:crictrax/dashboard/data/models/match_model.dart';
+
 import '../ data/models/tournament_model.dart';
 import '../../login/presentation/login_screen.dart';
 import '../../tournament_detail/presentation/tournament_detail_screen.dart';
@@ -468,6 +469,9 @@ if (_selectedNavIndex == 1) ...[
                         ),
                       );
                     }
+                    if (snapshot.hasError) {
+  debugPrint('❌ watchLocalMatches error: ${snapshot.error}');
+}
                     if (matches.isEmpty) return _buildEmptyMatchesState();
                     return _buildMatchRows(matches);
                   },
