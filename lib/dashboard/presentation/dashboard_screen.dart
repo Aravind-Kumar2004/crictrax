@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:crictrax/dashboard/%20data/models/match_model.dart';
+import 'package:crictrax/live_score/presentation/live_score_screen.dart';
 import 'package:flutter/physics.dart';
 
 import '../../services/background_music_service.dart';
@@ -1307,7 +1308,21 @@ Widget _buildHorizontalRow(List<TournamentModel> list) {
               child: MatchCardWidget(
                 match: m,
                 onTap: () {
-                  // TODO: navigate to MatchDetailScreen once its constructor is confirmed
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => LiveScoreScreen(
+                        matchId: m.id,
+                        tournamentId: m.tournamentId, // 'standalone' for local matches
+                        team1Name: m.teamId1Name,
+                        team2Name: m.teamId2Name,
+                        team1Id: '', // MatchEntity has no team-id field; name-based resolution is used instead
+                        team2Id: '',
+                        sessionId: widget.sessionId,
+                        userId: widget.userId,
+                      ),
+                    ),
+                  );
                 },
               ),
             );

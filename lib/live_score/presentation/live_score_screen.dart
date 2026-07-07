@@ -38,9 +38,10 @@ class LiveScoreScreen extends StatefulWidget {
   final String tournamentId;
   final String team1Name;
   final String team2Name;
-  final String team1Id;
+final String team1Id;
   final String team2Id;
   final String? sessionId;
+  final String? userId; // needed to resolve standalone (local) match paths
 
   const LiveScoreScreen({
     Key? key,
@@ -51,6 +52,7 @@ class LiveScoreScreen extends StatefulWidget {
     required this.team1Id,
     required this.team2Id,
     this.sessionId,
+    this.userId,
   }) : super(key: key);
 
   @override
@@ -93,8 +95,9 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
     )..repeat(reverse: true);
     _pulseAnim = CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut);
 
-    _initMatchSubscription();
-    _inningsStream = _repo.watchInnings(widget.tournamentId, widget.matchId);
+  _initMatchSubscription();
+    _inningsStream = _repo.watchInnings(widget.tournamentId, widget.matchId,
+        userId: widget.userId);
     _listenForLogout();
     _startHeartbeat();
   }
@@ -137,8 +140,8 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
 
   void _initMatchSubscription() {
     _matchSub?.cancel();
-    _matchSub = _repo
-        .watchMatch(widget.tournamentId, widget.matchId)
+  _matchSub = _repo
+        .watchMatch(widget.tournamentId, widget.matchId, userId: widget.userId)
         .listen((snap) {
       _lastMatchUpdate = DateTime.now();
       _reconnectAttempt = 0;
@@ -252,10 +255,11 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
       if (!mounted) return;
       debugPrint(
           '🔄 reconnecting match stream (attempt $_reconnectAttempt)');
-      _initMatchSubscription();
+     _initMatchSubscription();
       setState(() {
-        _inningsStream =
-            _repo.watchInnings(widget.tournamentId, widget.matchId);
+        _inningsStream = _repo.watchInnings(
+            widget.tournamentId, widget.matchId,
+            userId: widget.userId);
       });
     });
   }
@@ -430,7 +434,7 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
                           (fd['totalRuns'] as num?)?.toInt();
                     }
 
-                    return _BroadcastBottomPanel(
+                  return _BroadcastBottomPanel(
                       tournamentId: widget.tournamentId,
                       matchId: widget.matchId,
                       inningsId: currentDoc.id,
@@ -439,6 +443,7 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
                       team2Name: widget.team2Name,
                       team1Id: widget.team1Id,
                       team2Id: widget.team2Id,
+                      userId: widget.userId,
                       repo: _repo,
                       firstInningsBattingTeamName:
                       firstInningsBattingTeamName,
@@ -456,7 +461,7 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
     );
   }
 
-  Widget _buildCachedBar() {
+Widget _buildCachedBar() {
     return _BroadcastBottomPanel(
       tournamentId: widget.tournamentId,
       matchId: widget.matchId,
@@ -466,6 +471,7 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
       team2Name: widget.team2Name,
       team1Id: widget.team1Id,
       team2Id: widget.team2Id,
+      userId: widget.userId,
       repo: _repo,
       firstInningsBattingTeamName: _lastFirstInningsBattingTeamName,
       firstInningsTotal: null,
@@ -1384,6 +1390,7 @@ class _BroadcastBottomPanel extends StatefulWidget {
   final String team2Name;
   final String team1Id;
   final String team2Id;
+  final String? userId;
   final LiveScoreRepository repo;
   final String? firstInningsBattingTeamName;
   final int? firstInningsTotal;
@@ -1402,6 +1409,7 @@ class _BroadcastBottomPanel extends StatefulWidget {
     required this.repo,
     required this.pulseAnim,
     required this.isSecondInnings,
+    this.userId,
     this.firstInningsBattingTeamName,
     this.firstInningsTotal,
   });
@@ -1416,11 +1424,13 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
   List<Map<String, dynamic>> _cachedBatsmen = [];
   Map<String, dynamic>? _cachedBowler;
 
-  late String _trackedInningsId = widget.inningsId;
+ late String _trackedInningsId = widget.inningsId;
   late Stream<QuerySnapshot> _batsmenStream = widget.repo.watchBatsmen(
-      widget.tournamentId, widget.matchId, widget.inningsId);
+      widget.tournamentId, widget.matchId, widget.inningsId,
+      userId: widget.userId);
   late Stream<QuerySnapshot> _bowlersStream = widget.repo.watchBowlers(
-      widget.tournamentId, widget.matchId, widget.inningsId);
+      widget.tournamentId, widget.matchId, widget.inningsId,
+      userId: widget.userId);
 
 @override
   void didUpdateWidget(covariant _BroadcastBottomPanel oldWidget) {
@@ -1431,9 +1441,11 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
         _cachedBatsmen = [];
         _cachedBowler = null;
         _batsmenStream = widget.repo.watchBatsmen(
-            widget.tournamentId, widget.matchId, widget.inningsId);
+            widget.tournamentId, widget.matchId, widget.inningsId,
+            userId: widget.userId);
         _bowlersStream = widget.repo.watchBowlers(
-            widget.tournamentId, widget.matchId, widget.inningsId);
+            widget.tournamentId, widget.matchId, widget.inningsId,
+            userId: widget.userId);
       });
     }
   }
@@ -1770,13 +1782,14 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
                     _PanelDivider(),
 
                     // BALL TRACKER BLOCK
-                    Expanded(
+                 Expanded(
                       flex: 34,
                       child: _BallTrackerBlock(
                         tournamentId: widget.tournamentId,
                         matchId: widget.matchId,
                         inningsId: widget.inningsId,
                         repo: widget.repo,
+                        userId: widget.userId,
                         currentOverNumber: currentOverNumber,
                       ),
                     ),
@@ -2462,6 +2475,7 @@ class _RateChip extends StatelessWidget {
 class _BallTrackerBlock extends StatelessWidget {
   final String tournamentId, matchId, inningsId;
   final LiveScoreRepository repo;
+  final String? userId;
   final int currentOverNumber;
 
   const _BallTrackerBlock({
@@ -2470,6 +2484,7 @@ class _BallTrackerBlock extends StatelessWidget {
     required this.inningsId,
     required this.repo,
     required this.currentOverNumber,
+    this.userId,
   });
 
   @override
@@ -2481,11 +2496,12 @@ class _BallTrackerBlock extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _BallByBallTracker(
+       _BallByBallTracker(
             tournamentId: tournamentId,
             matchId: matchId,
             inningsId: inningsId,
             repo: repo,
+            userId: userId,
             overNumber: currentOverNumber,
           ),
         ],
@@ -3085,6 +3101,7 @@ class _PremiumForcedLogoutDialog extends StatelessWidget {
 class _BallByBallTracker extends StatefulWidget {
   final String tournamentId, matchId, inningsId;
   final LiveScoreRepository repo;
+  final String? userId;
   final int overNumber;
 
   const _BallByBallTracker({
@@ -3093,6 +3110,7 @@ class _BallByBallTracker extends StatefulWidget {
     required this.inningsId,
     required this.repo,
     required this.overNumber,
+    this.userId,
   });
 
   @override
@@ -3101,13 +3119,14 @@ class _BallByBallTracker extends StatefulWidget {
 }
 
 class _BallByBallTrackerState extends State<_BallByBallTracker> {
-  late int _trackedOver = widget.overNumber;
+   late int _trackedOver = widget.overNumber;
   late Stream<QuerySnapshot> _ballsStream =
   widget.repo.watchCurrentOverBalls(
     widget.tournamentId,
     widget.matchId,
     widget.inningsId,
     widget.overNumber,
+    userId: widget.userId,
   );
 
   @override
@@ -3119,7 +3138,8 @@ class _BallByBallTrackerState extends State<_BallByBallTracker> {
           widget.tournamentId,
           widget.matchId,
           widget.inningsId,
-          widget.overNumber);
+          widget.overNumber,
+          userId: widget.userId);
     }
   }
 
