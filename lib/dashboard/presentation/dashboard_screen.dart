@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/physics.dart';
+import 'package:flutter/services.dart';
 
 import '../../services/background_music_service.dart';
 import 'widgets/ad_banner_widget.dart';
@@ -14,6 +15,202 @@ import '../../tournament_detail/presentation/tournament_detail_screen.dart';
 import 'widgets/tournament_card_widget.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../settings/presentation/settings_screen.dart';
+
+// ─── TV Focus Navigation Primitives ───────────────────────────────────────────
+// Reusable widgets that add Android TV remote (D-pad) support to any
+// tappable UI without touching business logic, layout, or styling elsewhere.
+// They wrap content with Focus + Shortcuts + Actions (ActivateIntent) so
+// D-pad center / Enter / Select activate the widget, and they report the
+// current focused/hovered state back to the caller's builder so existing
+// hover-driven animations can be reused as-is, now driven by focus too.
+
+/// Generic reusable TV-focusable wrapper. This is the base primitive used by
+/// [TvFocusButton], [TvFocusTile], and [TvFocusableCard].
+class TvFocusWrapper extends StatefulWidget {
+  final Widget Function(BuildContext context, bool focused, bool hovered) builder;
+  final VoidCallback? onTap;
+  final FocusNode? focusNode;
+  final bool autofocus;
+  final ValueChanged<bool>? onFocusChange;
+  final ValueChanged<bool>? onHoverChange;
+  final bool ensureVisibleOnFocus;
+
+  const TvFocusWrapper({
+    super.key,
+    required this.builder,
+    this.onTap,
+    this.focusNode,
+    this.autofocus = false,
+    this.onFocusChange,
+    this.onHoverChange,
+    this.ensureVisibleOnFocus = true,
+  });
+
+  @override
+  State<TvFocusWrapper> createState() => _TvFocusWrapperState();
+}
+
+class _TvFocusWrapperState extends State<TvFocusWrapper> {
+  FocusNode? _internalNode;
+  bool _focused = false;
+  bool _hovered = false;
+
+  FocusNode get _node =>
+      widget.focusNode ?? (_internalNode ??= FocusNode(debugLabel: 'TvFocusWrapper'));
+
+  @override
+  void dispose() {
+    _internalNode?.dispose();
+    super.dispose();
+  }
+
+  void _handleFocusChange(bool focused) {
+    if (!mounted) return;
+    setState(() => _focused = focused);
+    widget.onFocusChange?.call(focused);
+    if (focused && widget.ensureVisibleOnFocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          Scrollable.ensureVisible(
+            context,
+            alignment: 0.5,
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+          );
+        }
+      });
+    }
+  }
+
+  void _handleHoverChange(bool hovered) {
+    if (!mounted) return;
+    setState(() => _hovered = hovered);
+    widget.onHoverChange?.call(hovered);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FocusableActionDetector(
+      focusNode: _node,
+      autofocus: widget.autofocus,
+      onFocusChange: _handleFocusChange,
+      onShowHoverHighlight: _handleHoverChange,
+      mouseCursor: SystemMouseCursors.click,
+      actions: <Type, Action<Intent>>{
+        ActivateIntent: CallbackAction<ActivateIntent>(
+          onInvoke: (intent) {
+            widget.onTap?.call();
+            return null;
+          },
+        ),
+      },
+      shortcuts: const <ShortcutActivator, Intent>{
+        SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
+        SingleActivator(LogicalKeyboardKey.numpadEnter): ActivateIntent(),
+        SingleActivator(LogicalKeyboardKey.select): ActivateIntent(),
+        SingleActivator(LogicalKeyboardKey.gameButtonA): ActivateIntent(),
+        SingleActivator(LogicalKeyboardKey.space): ActivateIntent(),
+      },
+      child: GestureDetector(
+        onTap: widget.onTap,
+        behavior: HitTestBehavior.opaque,
+        child: widget.builder(context, _focused, _hovered),
+      ),
+    );
+  }
+}
+
+/// Focus-driven, card-shaped focusable (tournament cards, "show more" tile).
+/// Kept as a distinct name for clarity even though it's a thin pass-through
+/// of [TvFocusWrapper].
+class TvFocusableCard extends StatelessWidget {
+  final Widget Function(BuildContext context, bool focused, bool hovered) builder;
+  final VoidCallback? onTap;
+  final FocusNode? focusNode;
+  final bool autofocus;
+  final ValueChanged<bool>? onFocusChange;
+  final ValueChanged<bool>? onHoverChange;
+
+  const TvFocusableCard({
+    super.key,
+    required this.builder,
+    this.onTap,
+    this.focusNode,
+    this.autofocus = false,
+    this.onFocusChange,
+    this.onHoverChange,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return TvFocusWrapper(
+      focusNode: focusNode,
+      autofocus: autofocus,
+      onTap: onTap,
+      onFocusChange: onFocusChange,
+      onHoverChange: onHoverChange,
+      builder: builder,
+    );
+  }
+}
+
+/// Focus-driven button used for dialog actions, nav rail items, and any
+/// simple tappable control that just needs a single "focused" flag.
+class TvFocusButton extends StatelessWidget {
+  final Widget Function(BuildContext context, bool focused) builder;
+  final VoidCallback onPressed;
+  final FocusNode? focusNode;
+  final bool autofocus;
+  final bool ensureVisibleOnFocus;
+
+  const TvFocusButton({
+    super.key,
+    required this.builder,
+    required this.onPressed,
+    this.focusNode,
+    this.autofocus = false,
+    this.ensureVisibleOnFocus = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return TvFocusWrapper(
+      focusNode: focusNode,
+      autofocus: autofocus,
+      onTap: onPressed,
+      ensureVisibleOnFocus: ensureVisibleOnFocus,
+      builder: (ctx, focused, hovered) => builder(ctx, focused || hovered),
+    );
+  }
+}
+
+/// Focus-driven row tile for vertical lists (bottom sheets, "all
+/// tournaments" list, etc). Ensures the row scrolls into view on focus.
+class TvFocusTile extends StatelessWidget {
+  final Widget Function(BuildContext context, bool focused) builder;
+  final VoidCallback onTap;
+  final FocusNode? focusNode;
+  final bool autofocus;
+
+  const TvFocusTile({
+    super.key,
+    required this.builder,
+    required this.onTap,
+    this.focusNode,
+    this.autofocus = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return TvFocusWrapper(
+      focusNode: focusNode,
+      autofocus: autofocus,
+      onTap: onTap,
+      ensureVisibleOnFocus: true,
+      builder: (ctx, focused, hovered) => builder(ctx, focused || hovered),
+    );
+  }
+}
 
 // ─── Design Tokens ────────────────────────────────────────────────────────────
 class _DS {
@@ -66,17 +263,17 @@ class _DS {
 class _SilkScrollBehavior extends ScrollBehavior {
   @override
   Widget buildOverscrollIndicator(
-    BuildContext context,
-    Widget child,
-    ScrollableDetails details,
-  ) => child; // no glow
+      BuildContext context,
+      Widget child,
+      ScrollableDetails details,
+      ) => child; // no glow
 
   @override
   Widget buildScrollbar(
-    BuildContext context,
-    Widget child,
-    ScrollableDetails details,
-  ) => child; // no scrollbar repaint layer
+      BuildContext context,
+      Widget child,
+      ScrollableDetails details,
+      ) => child; // no scrollbar repaint layer
 
   @override
   ScrollPhysics getScrollPhysics(BuildContext context) =>
@@ -98,9 +295,9 @@ class _SilkScrollPhysics extends ScrollPhysics {
 
   @override
   Simulation? createBallisticSimulation(
-    ScrollMetrics position,
-    double velocity,
-  ) {
+      ScrollMetrics position,
+      double velocity,
+      ) {
     // Already at rest
     if (velocity.abs() < 0.5) return null;
 
@@ -211,20 +408,20 @@ class _DashboardScreenState extends State<DashboardScreen>
         .snapshots()
         .listen(
           (snap) {
-            if (!snap.exists) return;
-            final data = snap.data()!;
-            if (data['loggedOut'] == true && mounted) {
-              debugPrint(
-                '🚪 DashboardScreen: loggedOut flag detected, showing forced logout modal',
-              );
-              _logoutSub?.cancel();
-              _showForcedLogoutModal();
-            }
-          },
-          onError: (e) {
-            debugPrint('❌ DashboardScreen: logout listener error: $e');
-          },
-        );
+        if (!snap.exists) return;
+        final data = snap.data()!;
+        if (data['loggedOut'] == true && mounted) {
+          debugPrint(
+            '🚪 DashboardScreen: loggedOut flag detected, showing forced logout modal',
+          );
+          _logoutSub?.cancel();
+          _showForcedLogoutModal();
+        }
+      },
+      onError: (e) {
+        debugPrint('❌ DashboardScreen: logout listener error: $e');
+      },
+    );
   }
 
   void _showForcedLogoutModal() {
@@ -247,7 +444,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   // Collapses + fades the ad banner as the user scrolls
-void _onScroll() {
+  void _onScroll() {
     final offset = _scrollCtrl.offset.clamp(0.0, _adCollapseDistance);
     final fade = 1.0 - (offset / _adCollapseDistance);
     if ((fade - _adFade.value).abs() > 0.01) {
@@ -255,7 +452,7 @@ void _onScroll() {
     }
   }
 
-@override
+  @override
   void dispose() {
     _logoutSub?.cancel();
     _scrollCtrl.removeListener(_onScroll);
@@ -376,13 +573,16 @@ void _onScroll() {
           ),
           // ── Main layout ───────────────────────────────────────────────────
           // ── Main layout ───────────────────────────────────────────────────
-          Row(
-            children: [
-              const SizedBox(
-                width: _DS.navWidthCollapsed,
-              ), // fixed slot, rail overlays on top
-              Expanded(child: _buildMainContent()),
-            ],
+          FocusTraversalGroup(
+            policy: ReadingOrderTraversalPolicy(),
+            child: Row(
+              children: [
+                const SizedBox(
+                  width: _DS.navWidthCollapsed,
+                ), // fixed slot, rail overlays on top
+                Expanded(child: _buildMainContent()),
+              ],
+            ),
           ),
           // Rail drawn last so it overlays content while expanding —
           // doesn't push or reflow the main content during animation.
@@ -398,7 +598,7 @@ void _onScroll() {
                     context,
                     MaterialPageRoute(
                       builder: (context) =>
-                          const SettingsScreen(initialNavIndex: 3),
+                      const SettingsScreen(initialNavIndex: 3),
                     ),
                   );
                 } else {
@@ -422,7 +622,7 @@ void _onScroll() {
         child: SingleChildScrollView(
           controller: _scrollCtrl,
           physics: const _SilkScrollPhysics(),
-        child: Column(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               ValueListenableBuilder<double>(
@@ -444,7 +644,7 @@ void _onScroll() {
                   ],
                 ),
               ),
-_buildSectionHeader('My Tournaments', _tournaments.length),
+              _buildSectionHeader('My Tournaments', _tournaments.length),
               const SizedBox(height: 28),
               _tournaments.isEmpty
                   ? _buildEmptyState()
@@ -751,228 +951,8 @@ _buildSectionHeader('My Tournaments', _tournaments.length),
     );
   }
 
-  void _showTournamentModal(BuildContext context, TournamentModel t) {
-    showGeneralDialog(
-      context: context,
-      barrierDismissible: true,
-      barrierLabel: 'dismiss',
-      barrierColor: Colors.black.withOpacity(0.75),
-      transitionDuration: const Duration(milliseconds: 280),
-      pageBuilder: (_, __, ___) => const SizedBox.shrink(),
-      transitionBuilder: (ctx, anim, _, __) {
-        final curve = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
-        return FadeTransition(
-          opacity: curve,
-          child: ScaleTransition(
-            scale: Tween<double>(begin: 0.92, end: 1.0).animate(curve),
-            child: Center(
-              child: Material(
-                color: Colors.transparent,
-                child: Container(
-                  width: MediaQuery.of(ctx).size.width * 0.52,
-                  constraints: const BoxConstraints(maxWidth: 640),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF0A1628),
-                    borderRadius: BorderRadius.circular(24),
-                    border: Border.all(color: Colors.white.withOpacity(0.08)),
-                    boxShadow: [
-                      BoxShadow(
-                        color: _DS.accent.withOpacity(0.10),
-                        blurRadius: 48,
-                        spreadRadius: 0,
-                      ),
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.6),
-                        blurRadius: 32,
-                      ),
-                    ],
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // Header stripe
-                        Container(
-                          height: 4,
-                          decoration: const BoxDecoration(
-                            gradient: _DS.accentGrad,
-                          ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.all(32),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              // Title row
-                              Row(
-                                children: [
-                                  Container(
-                                    width: 48,
-                                    height: 48,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: _DS.accent.withOpacity(0.08),
-                                      border: Border.all(
-                                        color: _DS.accent.withOpacity(0.2),
-                                      ),
-                                    ),
-                                    child: Icon(
-                                      Icons.emoji_events_rounded,
-                                      color: _DS.accent,
-                                      size: 22,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 16),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          t.name,
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 20,
-                                            fontWeight: FontWeight.w800,
-                                            letterSpacing: 0.2,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          t.id,
-                                          style: TextStyle(
-                                            color: Colors.white.withOpacity(
-                                              0.3,
-                                            ),
-                                            fontSize: 11,
-                                            letterSpacing: 0.5,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  GestureDetector(
-                                    onTap: () => Navigator.pop(ctx),
-                                    child: Container(
-                                      padding: const EdgeInsets.all(8),
-                                      decoration: BoxDecoration(
-                                        color: Colors.white.withOpacity(0.04),
-                                        borderRadius: BorderRadius.circular(10),
-                                        border: Border.all(
-                                          color: Colors.white.withOpacity(0.08),
-                                        ),
-                                      ),
-                                      child: Icon(
-                                        Icons.close_rounded,
-                                        color: Colors.white.withOpacity(0.4),
-                                        size: 18,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 28),
-                              // Divider
-                              Divider(
-                                color: Colors.white.withOpacity(0.06),
-                                height: 1,
-                              ),
-                              const SizedBox(height: 28),
-                              // Action buttons
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: GestureDetector(
-                                      onTap: () {
-                                        Navigator.pop(ctx);
-                                        Navigator.push(
-                                          context,
-                                          MaterialPageRoute(
-                                            builder: (_) =>
-                                                TournamentDetailScreen(
-                                                  tournamentId: t.id,
-                                                  tournament: t,
-                                                  sessionId: widget.sessionId,
-                                                ),
-                                          ),
-                                        );
-                                      },
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          vertical: 14,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          gradient: _DS.accentGrad,
-                                          borderRadius: BorderRadius.circular(
-                                            12,
-                                          ),
-                                          boxShadow: [
-                                            BoxShadow(
-                                              color: _DS.accent.withOpacity(
-                                                0.3,
-                                              ),
-                                              blurRadius: 16,
-                                            ),
-                                          ],
-                                        ),
-                                        child: const Center(
-                                          child: Text(
-                                            'Open Tournament',
-                                            style: TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.w700,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  GestureDetector(
-                                    onTap: () => Navigator.pop(ctx),
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        vertical: 14,
-                                        horizontal: 20,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: Colors.white.withOpacity(0.04),
-                                        borderRadius: BorderRadius.circular(12),
-                                        border: Border.all(
-                                          color: Colors.white.withOpacity(0.08),
-                                        ),
-                                      ),
-                                      child: Text(
-                                        'Cancel',
-                                        style: TextStyle(
-                                          color: Colors.white.withOpacity(0.5),
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
 
-Widget _buildTournamentRows() {
+  Widget _buildTournamentRows() {
     final live = _tournaments
         .where((t) => t.status.toLowerCase() == 'active')
         .toList();
@@ -993,21 +973,21 @@ Widget _buildTournamentRows() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-     if (live.isNotEmpty) ...[
+        if (live.isNotEmpty) ...[
           _buildRowHeader('Live', live.length, _DS.live,
               Icons.sensors_rounded),
           const SizedBox(height: 14),
           _buildHorizontalRow(live),
           const SizedBox(height: 32),
         ],
-      if (upcoming.isNotEmpty) ...[
+        if (upcoming.isNotEmpty) ...[
           _buildRowHeader('Upcoming', upcoming.length, _DS.warning,
               Icons.event_rounded),
           const SizedBox(height: 14),
           _buildHorizontalRow(upcoming),
           const SizedBox(height: 32),
         ],
-   if (completed.isNotEmpty) ...[
+        if (completed.isNotEmpty) ...[
           _buildRowHeader('Completed', completed.length, _DS.success,
               Icons.workspace_premium_rounded),
           const SizedBox(height: 14),
@@ -1020,122 +1000,136 @@ Widget _buildTournamentRows() {
     );
   }
 
- Widget _buildRowHeader(String title, int count, Color color, IconData icon) {
-  return Row(
-    children: [
-      // Icon badge
-      Container(
-        width: 34,
-        height: 34,
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.10),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: color.withOpacity(0.25), width: 1),
-        ),
-        child: Icon(icon, color: color, size: 17),
-      ),
-      const SizedBox(width: 12),
-      Text(
-        title,
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 16,
-          fontWeight: FontWeight.w800,
-          letterSpacing: 1.2,
-        ),
-      ),
-      const SizedBox(width: 10),
-      Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.12),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: color.withOpacity(0.3)),
-        ),
-        child: Text(
-          '$count',
-          style: TextStyle(
-            color: color,
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      ),
-      const SizedBox(width: 16),
-      Expanded(
-        child: Container(
-          height: 1,
+  Widget _buildRowHeader(String title, int count, Color color, IconData icon) {
+    return Row(
+      children: [
+        // Icon badge
+        Container(
+          width: 34,
+          height: 34,
           decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [color.withOpacity(0.3), Colors.transparent],
+            color: color.withOpacity(0.10),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: color.withOpacity(0.25), width: 1),
+          ),
+          child: Icon(icon, color: color, size: 17),
+        ),
+        const SizedBox(width: 12),
+        Text(
+          title,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 16,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 1.2,
+          ),
+        ),
+        const SizedBox(width: 10),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: color.withOpacity(0.3)),
+          ),
+          child: Text(
+            '$count',
+            style: TextStyle(
+              color: color,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
             ),
           ),
         ),
-      ),
-    ],
-  );
-}
-
-Widget _buildHorizontalRow(List<TournamentModel> list) {
-  const cardWidth = 260.0;
-  const cardHeight = 195.0;
-  const maxVisible = 6; // cards shown before "Show More" tile appears
-  final showMore = list.length > maxVisible;
-  final visibleList = showMore ? list.take(maxVisible).toList() : list;
-
-  // total items = visible cards + (1 show-more tile if needed)
-  final itemCount = visibleList.length + (showMore ? 1 : 0);
-
-  return SizedBox(
-    height: cardHeight + 20,
-    child: ScrollConfiguration(
-      behavior: _SilkScrollBehavior(),
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.only(
-          left: 2,
-          right: 24,
-          top: 8,
-          bottom: 8,
-        ),
-        itemCount: itemCount,
-        separatorBuilder: (_, __) => const SizedBox(width: 16),
-        itemBuilder: (context, index) {
-          // ── "Show More" tile at the end ──
-          if (showMore && index == visibleList.length) {
-            return _ShowMoreTile(
-              remaining: list.length - maxVisible,
-              width: cardWidth,
-              height: cardHeight,
-              allTournaments: list,
-              sessionId: widget.sessionId,
-            );
-          }
-
-          final t = visibleList[index];
-          return SizedBox(
-            width: cardWidth,
-            height: cardHeight,
-            // ── Uniform card background — fixes dark/black card issue ──
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: const Color(0xFF0A1628), // _DS.surface
-                borderRadius: BorderRadius.circular(16),
-              ),
-    child: ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: _HoverPreviewCard(
-                  tournament: t,
-                  onTap: () => _showTournamentModal(context, t),
-                ),
+        const SizedBox(width: 16),
+        Expanded(
+          child: Container(
+            height: 1,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [color.withOpacity(0.3), Colors.transparent],
               ),
             ),
-          );
-        },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildHorizontalRow(List<TournamentModel> list) {
+    const cardWidth = 260.0;
+    const cardHeight = 380.0;
+    const maxVisible = 6; // cards shown before "Show More" tile appears
+    final showMore = list.length > maxVisible;
+    final visibleList = showMore ? list.take(maxVisible).toList() : list;
+
+    // total items = visible cards + (1 show-more tile if needed)
+    final itemCount = visibleList.length + (showMore ? 1 : 0);
+
+    return SizedBox(
+      height: cardHeight + 20,
+      child: ScrollConfiguration(
+        behavior: _SilkScrollBehavior(),
+        child: FocusTraversalGroup(
+          policy: ReadingOrderTraversalPolicy(),
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.only(
+              left: 2,
+              right: 24,
+              top: 8,
+              bottom: 8,
+            ),
+            itemCount: itemCount,
+            separatorBuilder: (_, __) => const SizedBox(width: 16),
+            itemBuilder: (context, index) {
+              // ── "Show More" tile at the end ──
+              if (showMore && index == visibleList.length) {
+                return _ShowMoreTile(
+                  remaining: list.length - maxVisible,
+                  width: cardWidth,
+                  height: cardHeight,
+                  allTournaments: list,
+                  sessionId: widget.sessionId,
+                );
+              }
+
+              final t = visibleList[index];
+              return SizedBox(
+                width: cardWidth,
+                height: cardHeight,
+                // ── Uniform card background — fixes dark/black card issue ──
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0A1628), // _DS.surface
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: _HoverPreviewCard(
+                      tournament: t,
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => TournamentDetailScreen(
+                              tournamentId: t.id,
+                              tournament: t,
+                              sessionId: widget.sessionId,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
       ),
-    ),
-  );
-}
+    );
+  }
 
   Widget _buildEmptyState() {
     return Center(
@@ -1233,7 +1227,12 @@ class _SideNavRail extends StatefulWidget {
 }
 
 class _SideNavRailState extends State<_SideNavRail> {
-  bool _expanded = false;
+  // Expansion is driven by EITHER mouse hover OR keyboard/remote focus
+  // landing anywhere inside the rail.
+  bool _hoverExpanded = false;
+  bool _focusExpanded = false;
+
+  bool get _expanded => _hoverExpanded || _focusExpanded;
 
   static const _items = [
     (icon: Icons.home_rounded, label: 'Home'),
@@ -1245,8 +1244,8 @@ class _SideNavRailState extends State<_SideNavRail> {
   @override
   Widget build(BuildContext context) {
     return MouseRegion(
-      onEnter: (_) => setState(() => _expanded = true),
-      onExit: (_) => setState(() => _expanded = false),
+      onEnter: (_) => setState(() => _hoverExpanded = true),
+      onExit: (_) => setState(() => _hoverExpanded = false),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         curve: Curves.easeOut,
@@ -1257,115 +1256,130 @@ class _SideNavRailState extends State<_SideNavRail> {
             end: Alignment.centerRight,
             colors: _expanded
                 ? [
-                    Colors.black.withOpacity(0.52),
-                    Colors.black.withOpacity(0.28),
-                    Colors.transparent,
-                  ]
+              Colors.black.withOpacity(0.52),
+              Colors.black.withOpacity(0.28),
+              Colors.transparent,
+            ]
                 : [Colors.black.withOpacity(0.22), Colors.transparent],
             stops: _expanded ? const [0.0, 0.65, 1.0] : const [0.0, 1.0],
           ),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SizedBox(height: 36),
-            // Logo mark — shrinks slightly when collapsed
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                children: [
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    width: _expanded ? 40 : 36,
-                    height: _expanded ? 40 : 36,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(12),
-                      gradient: _DS.accentGrad,
-                      boxShadow: [
-                        BoxShadow(
-                          color: _DS.accent.withOpacity(0.35),
-                          blurRadius: 16,
-                          spreadRadius: 1,
+        // Ancestor Focus node: FocusNode.hasFocus is true for ANY ancestor
+        // of the currently-focused descendant, so this fires whenever focus
+        // enters/leaves the rail as a whole — used to auto-expand on D-pad
+        // navigation, same as the existing mouse-hover expand behavior.
+        child: Focus(
+          canRequestFocus: false,
+          skipTraversal: true,
+          onFocusChange: (hasFocus) =>
+              setState(() => _focusExpanded = hasFocus),
+          child: FocusTraversalGroup(
+            policy: WidgetOrderTraversalPolicy(),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 36),
+                // Logo mark — shrinks slightly when collapsed
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Row(
+                    children: [
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        width: _expanded ? 40 : 36,
+                        height: _expanded ? 40 : 36,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(12),
+                          gradient: _DS.accentGrad,
+                          boxShadow: [
+                            BoxShadow(
+                              color: _DS.accent.withOpacity(0.35),
+                              blurRadius: 16,
+                              spreadRadius: 1,
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                    child: Icon(
-                      Icons.sports_cricket,
-                      color: Colors.white,
-                      size: _expanded ? 20 : 18,
-                    ),
-                  ),
-                  AnimatedSize(
-                    duration: const Duration(milliseconds: 200),
-                    curve: Curves.easeOut,
-                    child: _expanded
-                        ? Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const SizedBox(width: 12),
-                              Text(
-                                'CRICTRAX',
-                                style: TextStyle(
-                                  color: _DS.accent,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: 1.8,
-                                ),
+                        child: Icon(
+                          Icons.sports_cricket,
+                          color: Colors.white,
+                          size: _expanded ? 20 : 18,
+                        ),
+                      ),
+                      AnimatedSize(
+                        duration: const Duration(milliseconds: 200),
+                        curve: Curves.easeOut,
+                        child: _expanded
+                            ? Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const SizedBox(width: 12),
+                            Text(
+                              'CRICTRAX',
+                              style: TextStyle(
+                                color: _DS.accent,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 1.8,
                               ),
-                            ],
-                          )
-                        : const SizedBox.shrink(),
+                            ),
+                          ],
+                        )
+                            : const SizedBox.shrink(),
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+                const SizedBox(height: 40),
+
+                // Nav items
+                ...List.generate(_items.length, (i) {
+                  final item = _items[i];
+                  return _NavItem(
+                    icon: item.icon,
+                    label: item.label,
+                    isSelected: widget.selectedIndex == i,
+                    expanded: _expanded,
+                    onTap: () => widget.onIndexChanged(i),
+                    autofocus: i == 0,
+                  );
+                }),
+
+                const Spacer(),
+
+                // Divider
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Divider(color: Colors.white.withOpacity(0.06), height: 1),
+                ),
+                const SizedBox(height: 16),
+
+                // Logout
+                _NavItem(
+                  icon: Icons.logout_rounded,
+                  label: 'Logout',
+                  isSelected: false,
+                  expanded: _expanded,
+                  onTap: widget.onLogout,
+                  isDanger: true,
+                ),
+                const SizedBox(height: 28),
+              ],
             ),
-            const SizedBox(height: 40),
-
-            // Nav items
-            ...List.generate(_items.length, (i) {
-              final item = _items[i];
-              return _NavItem(
-                icon: item.icon,
-                label: item.label,
-                isSelected: widget.selectedIndex == i,
-                expanded: _expanded,
-                onTap: () => widget.onIndexChanged(i),
-              );
-            }),
-
-            const Spacer(),
-
-            // Divider
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Divider(color: Colors.white.withOpacity(0.06), height: 1),
-            ),
-            const SizedBox(height: 16),
-
-            // Logout
-            _NavItem(
-              icon: Icons.logout_rounded,
-              label: 'Logout',
-              isSelected: false,
-              expanded: _expanded,
-              onTap: widget.onLogout,
-              isDanger: true,
-            ),
-            const SizedBox(height: 28),
-          ],
+          ),
         ),
       ),
     );
   }
 }
 
-class _NavItem extends StatefulWidget {
+class _NavItem extends StatelessWidget {
   final IconData icon;
   final String label;
   final bool isSelected;
   final bool expanded;
   final VoidCallback onTap;
   final bool isDanger;
+  final bool autofocus;
 
   const _NavItem({
     required this.icon,
@@ -1374,42 +1388,33 @@ class _NavItem extends StatefulWidget {
     required this.expanded,
     required this.onTap,
     this.isDanger = false,
+    this.autofocus = false,
   });
 
   @override
-  State<_NavItem> createState() => _NavItemState();
-}
-
-class _NavItemState extends State<_NavItem> {
-  bool _hovered = false;
-
-  @override
   Widget build(BuildContext context) {
-    final active = widget.isSelected;
-    final hovered = _hovered && !active;
- final activeColor = widget.isDanger ? _DS.danger : _DS.accent;
-    final hoverColor = Colors.transparent;
+    final active = isSelected;
+    final activeColor = isDanger ? _DS.danger : _DS.accent;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
-      child: MouseRegion(
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
-        cursor: SystemMouseCursors.click,
-        child: GestureDetector(
-          onTap: widget.onTap,
-          child: AnimatedOpacity(
-            opacity: active ? 1.0 : (_hovered ? 1.0 : 0.72),
+      child: TvFocusButton(
+        autofocus: autofocus,
+        onPressed: onTap,
+        builder: (context, highlighted) {
+          final showHighlight = highlighted && !active;
+          return AnimatedOpacity(
+            opacity: active ? 1.0 : (highlighted ? 1.0 : 0.72),
             duration: const Duration(milliseconds: 150),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 150),
               curve: Curves.easeOut,
               margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
               padding: EdgeInsets.symmetric(
-                vertical: widget.expanded ? 12 : 10,
-                horizontal: widget.expanded ? 14 : 4,
+                vertical: expanded ? 12 : 10,
+                horizontal: expanded ? 14 : 4,
               ),
-         decoration: BoxDecoration(
+              decoration: BoxDecoration(
                 color: active
                     ? activeColor.withOpacity(0.12)
                     : Colors.transparent,
@@ -1420,72 +1425,72 @@ class _NavItemState extends State<_NavItem> {
                       : Colors.transparent,
                   width: 1,
                 ),
-                boxShadow: active && !widget.isDanger
+                boxShadow: active && !isDanger
                     ? [
-                        BoxShadow(
-                          color: activeColor.withOpacity(0.2),
-                          blurRadius: 12,
-                          spreadRadius: 0,
-                        ),
-                      ]
+                  BoxShadow(
+                    color: activeColor.withOpacity(0.2),
+                    blurRadius: 12,
+                    spreadRadius: 0,
+                  ),
+                ]
                     : [],
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Icon with its own hover highlight — tight fit
+                  // Icon with its own hover/focus highlight — tight fit
                   AnimatedContainer(
                     duration: const Duration(milliseconds: 150),
                     padding: const EdgeInsets.all(6),
                     decoration: BoxDecoration(
-                      color: _hovered && !active
+                      color: showHighlight
                           ? Colors.white.withOpacity(0.08)
                           : Colors.transparent,
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Icon(
-                      widget.icon,
+                      icon,
                       color: active
                           ? activeColor
-                          : _hovered
+                          : highlighted
                           ? Colors.white
                           : Colors.white.withOpacity(0.55),
-                      size: widget.expanded ? 20 : 22,
+                      size: expanded ? 20 : 22,
                     ),
                   ),
                   AnimatedSize(
                     duration: const Duration(milliseconds: 200),
                     curve: Curves.easeOut,
-                    child: widget.expanded
+                    child: expanded
                         ? Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const SizedBox(width: 8),
-                              AnimatedDefaultTextStyle(
-                                duration: const Duration(milliseconds: 150),
-                                style: TextStyle(
-                                  color: active
-                                      ? activeColor
-                                      : _hovered
-                                      ? Colors.white
-                                      : Colors.white.withOpacity(0.55),
-                                  fontSize: 13,
-                                  fontWeight: _hovered || active
-                                      ? FontWeight.w700
-                                      : FontWeight.w500,
-                                  letterSpacing: 0.3,
-                                ),
-                                child: Text(widget.label),
-                              ),
-                            ],
-                          )
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const SizedBox(width: 8),
+                        AnimatedDefaultTextStyle(
+                          duration: const Duration(milliseconds: 150),
+                          style: TextStyle(
+                            color: active
+                                ? activeColor
+                                : highlighted
+                                ? Colors.white
+                                : Colors.white.withOpacity(0.55),
+                            fontSize: 13,
+                            fontWeight: highlighted || active
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                            letterSpacing: 0.3,
+                          ),
+                          child: Text(label),
+                        ),
+                      ],
+                    )
                         : const SizedBox.shrink(),
                   ),
                 ],
               ),
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
@@ -1496,8 +1501,15 @@ class _NavItemState extends State<_NavItem> {
 class _HoverPreviewCard extends StatefulWidget {
   final TournamentModel tournament;
   final VoidCallback onTap;
+  final bool autofocus;
+  final FocusNode? focusNode;
 
-  const _HoverPreviewCard({required this.tournament, required this.onTap});
+  const _HoverPreviewCard({
+    required this.tournament,
+    required this.onTap,
+    this.autofocus = false,
+    this.focusNode,
+  });
 
   @override
   State<_HoverPreviewCard> createState() => _HoverPreviewCardState();
@@ -1505,7 +1517,10 @@ class _HoverPreviewCard extends StatefulWidget {
 
 class _HoverPreviewCardState extends State<_HoverPreviewCard>
     with SingleTickerProviderStateMixin {
-  bool _hovered = false;
+  // Combined "highlighted" state — true when hovered by mouse OR focused by
+  // TV remote — drives the exact same animation that used to be hover-only.
+  bool _isFocused = false;
+  bool _isHovered = false;
   late AnimationController _ctrl;
   late Animation<double> _scaleAnim;
   late Animation<double> _fadeAnim;
@@ -1530,15 +1545,22 @@ class _HoverPreviewCardState extends State<_HoverPreviewCard>
     super.dispose();
   }
 
-  void _onEnter(_) {
-    setState(() => _hovered = true);
-    _ctrl.forward();
+  void _syncAnimation() {
+    if (_isFocused || _isHovered) {
+      _ctrl.forward();
+    } else {
+      _ctrl.reverse();
+    }
   }
 
-  void _onExit(_) {
-    _ctrl.reverse().then((_) {
-      if (mounted) setState(() => _hovered = false);
-    });
+  void _onFocusChange(bool focused) {
+    _isFocused = focused;
+    _syncAnimation();
+  }
+
+  void _onHoverChange(bool hovered) {
+    _isHovered = hovered;
+    _syncAnimation();
   }
 
   @override
@@ -1546,17 +1568,19 @@ class _HoverPreviewCardState extends State<_HoverPreviewCard>
     final t = widget.tournament;
     final teamColor = _DS.teamColor(t.name);
 
-    return MouseRegion(
-      onEnter: _onEnter,
-      onExit: _onExit,
-      cursor: SystemMouseCursors.click,
-      child: AnimatedBuilder(
-        animation: _ctrl,
-        builder: (_, __) {
-          return Transform.scale(
-            scale: _scaleAnim.value,
-            child: GestureDetector(
-              onTap: widget.onTap,
+    return TvFocusableCard(
+      focusNode: widget.focusNode,
+      autofocus: widget.autofocus,
+      onTap: widget.onTap,
+      onFocusChange: _onFocusChange,
+      onHoverChange: _onHoverChange,
+      builder: (context, focused, hovered) {
+        final highlighted = focused || hovered;
+        return AnimatedBuilder(
+          animation: _ctrl,
+          builder: (_, __) {
+            return Transform.scale(
+              scale: _scaleAnim.value,
               child: Stack(
                 clipBehavior: Clip.none,
                 children: [
@@ -1567,25 +1591,33 @@ class _HoverPreviewCardState extends State<_HoverPreviewCard>
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(16),
                       border: Border.all(
-                        color: _hovered
-                            ? teamColor.withOpacity(0.7)
+                        color: highlighted
+                            ? (focused
+                            ? _DS.accent.withOpacity(0.9)
+                            : teamColor.withOpacity(0.7))
                             : Colors.white.withOpacity(0.06),
-                        width: _hovered ? 2 : 1,
+                        width: highlighted ? 2 : 1,
                       ),
-                      boxShadow: _hovered
+                      boxShadow: highlighted
                           ? [
-                              BoxShadow(
-                                color: teamColor.withOpacity(0.25),
-                                blurRadius: 28,
-                                spreadRadius: 2,
-                                offset: const Offset(0, 6),
-                              ),
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.5),
-                                blurRadius: 20,
-                                offset: const Offset(0, 8),
-                              ),
-                            ]
+                        BoxShadow(
+                          color: teamColor.withOpacity(0.25),
+                          blurRadius: 28,
+                          spreadRadius: 2,
+                          offset: const Offset(0, 6),
+                        ),
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.5),
+                          blurRadius: 20,
+                          offset: const Offset(0, 8),
+                        ),
+                        if (focused)
+                          BoxShadow(
+                            color: _DS.accent.withOpacity(0.4),
+                            blurRadius: 24,
+                            spreadRadius: 1,
+                          ),
+                      ]
                           : [],
                     ),
                     child: ClipRRect(
@@ -1597,9 +1629,9 @@ class _HoverPreviewCardState extends State<_HoverPreviewCard>
                             tournament: t,
                             onTap: widget.onTap,
                           ),
-                          // Overlay that fades in on hover — darkens card
-                          // so the action button stands out
-                          if (_hovered)
+                          // Overlay that fades in on hover/focus — darkens
+                          // card so the action button stands out
+                          if (highlighted)
                             Positioned.fill(
                               child: FadeTransition(
                                 opacity: _fadeAnim,
@@ -1618,7 +1650,7 @@ class _HoverPreviewCardState extends State<_HoverPreviewCard>
                               ),
                             ),
                           // Top accent bar that slides in
-                          if (_hovered)
+                          if (highlighted)
                             Positioned(
                               top: 0,
                               left: 0,
@@ -1636,7 +1668,7 @@ class _HoverPreviewCardState extends State<_HoverPreviewCard>
                               ),
                             ),
                           // Bottom action strip
-                          if (_hovered)
+                          if (highlighted)
                             Positioned(
                               bottom: 0,
                               left: 0,
@@ -1686,7 +1718,7 @@ class _HoverPreviewCardState extends State<_HoverPreviewCard>
                                           ),
                                           child: const Row(
                                             mainAxisAlignment:
-                                                MainAxisAlignment.center,
+                                            MainAxisAlignment.center,
                                             children: [
                                               Icon(
                                                 Icons.play_arrow_rounded,
@@ -1718,10 +1750,10 @@ class _HoverPreviewCardState extends State<_HoverPreviewCard>
                   ),
                 ],
               ),
-            ),
-          );
-        },
-      ),
+            );
+          },
+        );
+      },
     );
   }
 }
@@ -1748,13 +1780,13 @@ class _StatChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final iconWidget = pulse && pulseAnim != null
         ? AnimatedBuilder(
-            animation: pulseAnim!,
-            builder: (_, __) => Icon(
-              Icons.circle,
-              color: color.withOpacity(pulseAnim!.value),
-              size: 8,
-            ),
-          )
+      animation: pulseAnim!,
+      builder: (_, __) => Icon(
+        Icons.circle,
+        color: color.withOpacity(pulseAnim!.value),
+        size: 8,
+      ),
+    )
         : Icon(icon, color: color, size: 14);
 
     return Container(
@@ -1866,12 +1898,12 @@ class _ScoreFlashChipState extends State<_ScoreFlashChip>
             ),
             boxShadow: glow > 0.01
                 ? [
-                    BoxShadow(
-                      color: const Color(0xFFFFD700).withOpacity(glow * 0.55),
-                      blurRadius: 18 * glow,
-                      spreadRadius: 2 * glow,
-                    ),
-                  ]
+              BoxShadow(
+                color: const Color(0xFFFFD700).withOpacity(glow * 0.55),
+                blurRadius: 18 * glow,
+                spreadRadius: 2 * glow,
+              ),
+            ]
                 : [],
           ),
           child: child,
@@ -2176,99 +2208,89 @@ class _LogoutDialog extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 28),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Focus(
-                        child: Builder(
-                          builder: (ctx) {
-                            final f = Focus.of(ctx).hasFocus;
-                            return GestureDetector(
-                              onTap: onCancel,
-                              child: AnimatedContainer(
-                                duration: const Duration(milliseconds: 150),
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 14,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: f
-                                      ? Colors.white.withOpacity(0.1)
-                                      : Colors.white.withOpacity(0.04),
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(
-                                    color: f
-                                        ? Colors.white.withOpacity(0.3)
-                                        : Colors.white.withOpacity(0.08),
-                                  ),
-                                ),
-                                child: Center(
-                                  child: Text(
-                                    'Cancel',
-                                    style: TextStyle(
-                                      color: Colors.white.withOpacity(0.6),
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
+                FocusTraversalGroup(
+                  policy: ReadingOrderTraversalPolicy(),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TvFocusButton(
+                          autofocus: true,
+                          onPressed: onCancel,
+                          builder: (context, focused) => AnimatedContainer(
+                            duration: const Duration(milliseconds: 150),
+                            padding: const EdgeInsets.symmetric(
+                              vertical: 14,
+                            ),
+                            decoration: BoxDecoration(
+                              color: focused
+                                  ? Colors.white.withOpacity(0.1)
+                                  : Colors.white.withOpacity(0.04),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: focused
+                                    ? Colors.white.withOpacity(0.3)
+                                    : Colors.white.withOpacity(0.08),
+                              ),
+                            ),
+                            child: Center(
+                              child: Text(
+                                'Cancel',
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.6),
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
                                 ),
                               ),
-                            );
-                          },
+                            ),
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Focus(
-                        child: Builder(
-                          builder: (ctx) {
-                            final f = Focus.of(ctx).hasFocus;
-                            return GestureDetector(
-                              onTap: onConfirm,
-                              child: AnimatedContainer(
-                                duration: const Duration(milliseconds: 150),
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 14,
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TvFocusButton(
+                          onPressed: onConfirm,
+                          builder: (context, focused) => AnimatedContainer(
+                            duration: const Duration(milliseconds: 150),
+                            padding: const EdgeInsets.symmetric(
+                              vertical: 14,
+                            ),
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: focused
+                                    ? [
+                                  const Color(0xFFFF5252),
+                                  const Color(0xFFCC0000),
+                                ]
+                                    : [
+                                  _DS.danger.withOpacity(0.8),
+                                  const Color(0xFF990000),
+                                ],
+                              ),
+                              borderRadius: BorderRadius.circular(12),
+                              boxShadow: focused
+                                  ? [
+                                BoxShadow(
+                                  color: _DS.danger.withOpacity(0.4),
+                                  blurRadius: 16,
                                 ),
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    colors: f
-                                        ? [
-                                            const Color(0xFFFF5252),
-                                            const Color(0xFFCC0000),
-                                          ]
-                                        : [
-                                            _DS.danger.withOpacity(0.8),
-                                            const Color(0xFF990000),
-                                          ],
-                                  ),
-                                  borderRadius: BorderRadius.circular(12),
-                                  boxShadow: f
-                                      ? [
-                                          BoxShadow(
-                                            color: _DS.danger.withOpacity(0.4),
-                                            blurRadius: 16,
-                                          ),
-                                        ]
-                                      : [],
-                                ),
-                                child: const Center(
-                                  child: Text(
-                                    'Sign Out',
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
+                              ]
+                                  : [],
+                            ),
+                            child: const Center(
+                              child: Text(
+                                'Sign Out',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700,
                                 ),
                               ),
-                            );
-                          },
+                            ),
+                          ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -2362,7 +2384,7 @@ class _CrowdWaveformPainter extends CustomPainter {
   bool shouldRepaint(_CrowdWaveformPainter old) => old.phase != phase;
 }
 // ─── Show More Tile ───────────────────────────────────────────────────────────
-class _ShowMoreTile extends StatefulWidget {
+class _ShowMoreTile extends StatelessWidget {
   final int remaining;
   final double width;
   final double height;
@@ -2376,13 +2398,6 @@ class _ShowMoreTile extends StatefulWidget {
     required this.allTournaments,
     required this.sessionId,
   });
-
-  @override
-  State<_ShowMoreTile> createState() => _ShowMoreTileState();
-}
-
-class _ShowMoreTileState extends State<_ShowMoreTile> {
-  bool _hovered = false;
 
   void _showAllSheet(BuildContext context) {
     showModalBottomSheet(
@@ -2439,7 +2454,7 @@ class _ShowMoreTileState extends State<_ShowMoreTile> {
                           ),
                         ),
                         child: Text(
-                          '${widget.allTournaments.length}',
+                          '${allTournaments.length}',
                           style: TextStyle(
                             color: _DS.accent,
                             fontSize: 11,
@@ -2456,125 +2471,141 @@ class _ShowMoreTileState extends State<_ShowMoreTile> {
                   height: 1,
                 ),
                 Expanded(
-                  child: ListView.separated(
-                    controller: scrollCtrl,
-                    padding: const EdgeInsets.all(20),
-                    itemCount: widget.allTournaments.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 12),
-                    itemBuilder: (ctx2, i) {
-                      final t = widget.allTournaments[i];
-                      return GestureDetector(
-                        onTap: () {
-                          Navigator.pop(ctx2);
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => TournamentDetailScreen(
-                                tournamentId: t.id,
-                                tournament: t,
-                                sessionId: widget.sessionId,
+                  child: FocusTraversalGroup(
+                    policy: ReadingOrderTraversalPolicy(),
+                    child: ListView.separated(
+                      controller: scrollCtrl,
+                      padding: const EdgeInsets.all(20),
+                      itemCount: allTournaments.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 12),
+                      itemBuilder: (ctx2, i) {
+                        final t = allTournaments[i];
+                        return TvFocusTile(
+                          autofocus: i == 0,
+                          onTap: () {
+                            Navigator.pop(ctx2);
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => TournamentDetailScreen(
+                                  tournamentId: t.id,
+                                  tournament: t,
+                                  sessionId: sessionId,
+                                ),
                               ),
+                            );
+                          },
+                          builder: (context, focused) => Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 18,
+                              vertical: 16,
                             ),
-                          );
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 18,
-                            vertical: 16,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF0F1E35),
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(
-                              color: Colors.white.withOpacity(0.06),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF0F1E35),
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                color: focused
+                                    ? _DS.accent.withOpacity(0.6)
+                                    : Colors.white.withOpacity(0.06),
+                                width: focused ? 1.5 : 1,
+                              ),
+                              boxShadow: focused
+                                  ? [
+                                BoxShadow(
+                                  color: _DS.accent.withOpacity(0.25),
+                                  blurRadius: 16,
+                                ),
+                              ]
+                                  : [],
                             ),
-                          ),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 40,
-                                height: 40,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: _DS.teamColor(
-                                    t.name,
-                                  ).withOpacity(0.15),
-                                  border: Border.all(
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 40,
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
                                     color: _DS.teamColor(
                                       t.name,
-                                    ).withOpacity(0.4),
-                                  ),
-                                ),
-                                child: Center(
-                                  child: Text(
-                                    t.name.isNotEmpty
-                                        ? t.name[0].toUpperCase()
-                                        : '?',
-                                    style: TextStyle(
-                                      color: _DS.teamColor(t.name),
-                                      fontWeight: FontWeight.w800,
-                                      fontSize: 16,
+                                    ).withOpacity(0.15),
+                                    border: Border.all(
+                                      color: _DS.teamColor(
+                                        t.name,
+                                      ).withOpacity(0.4),
                                     ),
                                   ),
-                                ),
-                              ),
-                              const SizedBox(width: 14),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      t.name,
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 3),
-                                    Text(
-                                      t.city,
+                                  child: Center(
+                                    child: Text(
+                                      t.name.isNotEmpty
+                                          ? t.name[0].toUpperCase()
+                                          : '?',
                                       style: TextStyle(
-                                        color: Colors.white.withOpacity(0.4),
-                                        fontSize: 12,
+                                        color: _DS.teamColor(t.name),
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 16,
                                       ),
                                     ),
-                                  ],
-                                ),
-                              ),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 4,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: _DS.accent.withOpacity(0.08),
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(
-                                    color: _DS.accent.withOpacity(0.2),
                                   ),
                                 ),
-                                child: Text(
-                                  t.status,
-                                  style: TextStyle(
-                                    color: _DS.accent,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w700,
-                                    letterSpacing: 0.5,
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                    CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        t.name,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 3),
+                                      Text(
+                                        t.city,
+                                        style: TextStyle(
+                                          color: Colors.white.withOpacity(0.4),
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
-                              ),
-                              const SizedBox(width: 10),
-                              Icon(
-                                Icons.chevron_right_rounded,
-                                color: Colors.white.withOpacity(0.3),
-                                size: 20,
-                              ),
-                            ],
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 4,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: _DS.accent.withOpacity(0.08),
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(
+                                      color: _DS.accent.withOpacity(0.2),
+                                    ),
+                                  ),
+                                  child: Text(
+                                    t.status,
+                                    style: TextStyle(
+                                      color: _DS.accent,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w700,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Icon(
+                                  Icons.chevron_right_rounded,
+                                  color: Colors.white.withOpacity(0.3),
+                                  size: 20,
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                      );
-                    },
+                        );
+                      },
+                    ),
                   ),
                 ),
               ],
@@ -2587,27 +2618,34 @@ class _ShowMoreTileState extends State<_ShowMoreTile> {
 
   @override
   Widget build(BuildContext context) {
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: () => _showAllSheet(context),
-        child: AnimatedContainer(
+    return TvFocusableCard(
+      onTap: () => _showAllSheet(context),
+      builder: (context, focused, hovered) {
+        final highlighted = focused || hovered;
+        return AnimatedContainer(
           duration: const Duration(milliseconds: 200),
-          width: widget.width,
-          height: widget.height,
+          width: width,
+          height: height,
           decoration: BoxDecoration(
-            color: _hovered
+            color: highlighted
                 ? _DS.accent.withOpacity(0.08)
                 : const Color(0xFF0A1628),
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-              color: _hovered
+              color: highlighted
                   ? _DS.accent.withOpacity(0.4)
                   : Colors.white.withOpacity(0.06),
-              width: _hovered ? 2 : 1,
+              width: highlighted ? 2 : 1,
             ),
+            boxShadow: focused
+                ? [
+              BoxShadow(
+                color: _DS.accent.withOpacity(0.3),
+                blurRadius: 20,
+                spreadRadius: 1,
+              ),
+            ]
+                : [],
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -2628,7 +2666,7 @@ class _ShowMoreTileState extends State<_ShowMoreTile> {
               ),
               const SizedBox(height: 12),
               Text(
-                '+${widget.remaining} more',
+                '+$remaining more',
                 style: TextStyle(
                   color: _DS.accent,
                   fontSize: 15,
@@ -2646,8 +2684,8 @@ class _ShowMoreTileState extends State<_ShowMoreTile> {
               ),
             ],
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }

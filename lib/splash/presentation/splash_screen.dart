@@ -14,10 +14,7 @@ class _C {
   static const white = Colors.white;
 }
 
-// ── Asset paths — update these to match your pubspec.yaml asset declarations ──
-// NOTE: Add these to pubspec.yaml under flutter > assets if not already present:
-//   - assets/images/stadium_background.png
-//   - assets/images/crictrax_logo.png   (optional — falls back to icon if missing)
+
 class _Assets {
   static const stadiumBackground = 'assets/images/backgrounds/splash_bg.png';
   static const crictraxLogo = 'assets/images/crictrax_logo_login.png';
@@ -78,7 +75,7 @@ class _CinematicSplashState extends State<CinematicSplash>
     // Total: 2300ms — identical to original duration (timer/duration unchanged)
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 3300),
+      duration: const Duration(seconds: 3),
     );
 
     // ── Act 1: scanline sweep (0 → ~400ms) ─────────────────────────────────
@@ -206,7 +203,7 @@ class _CinematicSplashState extends State<CinematicSplash>
       Navigator.of(context).pushReplacement(
         PageRouteBuilder(
           transitionDuration: const Duration(milliseconds: 800),
-          pageBuilder: (_, __, ___) => const LoginScreen(),
+          pageBuilder: (_, __, ___) => LoginScreen(),
           transitionsBuilder: (_, animation, __, child) =>
               FadeTransition(opacity: animation, child: child),
         ),
@@ -328,12 +325,12 @@ class _CinematicSplashState extends State<CinematicSplash>
                 opacity: _exitDarken.value,
                 child: Container(color: Colors.black),
               ),
-              BackdropFilter(
-                filter: ImageFilter.blur(
-                  sigmaX: _backgroundBlur.value,
-                  sigmaY: _backgroundBlur.value,
+              AnimatedOpacity(
+                opacity: _exitDarken.value,
+                duration: Duration.zero,
+                child: Container(
+                  color: Colors.black.withOpacity(0.25),
                 ),
-                child: Container(color: Colors.transparent),
               ),
             ],
           );
@@ -525,43 +522,40 @@ class _CinematicSplashState extends State<CinematicSplash>
             ),
           ),
         ),
-        // Premium glassmorphism container holding the logo (image if
-        // available, falls back to the cricket icon otherwise)
-        ClipRRect(
-          borderRadius: BorderRadius.circular(28),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-            child: Container(
-              width: 96,
-              height: 96,
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(28),
-                gradient: LinearGradient(
-                  colors: [
-                    _C.accent.withOpacity(0.18),
-                    _C.accentDim.withOpacity(0.08),
-                  ],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                border: Border.all(
-                  color: _C.accent.withOpacity(0.35),
-                  width: 1,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: _C.accent.withOpacity(0.2 * _iconGlow.value),
-                    blurRadius: 30,
-                    spreadRadius: 2,
-                  ),
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.25),
-                    blurRadius: 20,
-                    offset: const Offset(0, 8),
-                  ),
-                ],
-              ),
+
+              ClipRRect(
+                    borderRadius: BorderRadius.circular(28),
+                     child: Container(
+                     width: 96,
+                      height: 96,
+                       padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(28),
+                          color: Colors.white.withOpacity(0.08), // Glass effect
+                      gradient: LinearGradient(
+                        colors: [
+                                _C.accent.withOpacity(0.18),
+                              _C.accentDim.withOpacity(0.08),
+                                ],
+                            begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                            ),
+                         border: Border.all(
+                       color: _C.accent.withOpacity(0.35),
+                               ),
+                                       boxShadow: [
+                                                    BoxShadow(
+                              color: _C.accent.withOpacity(0.2 * _iconGlow.value),
+                                   blurRadius: 30,
+                                    spreadRadius: 2,
+                                     ),
+                                  BoxShadow(
+                                  color: Colors.black.withOpacity(0.25),
+                                  blurRadius: 20,
+                                    offset: const Offset(0, 8),
+                                      ),
+                                        ],
+                                     ),
               child: (_hasLogoAsset == true)
                   ? Image.asset(
                 _Assets.crictraxLogo,
@@ -593,7 +587,7 @@ class _CinematicSplashState extends State<CinematicSplash>
             ),
               ),
             ),
-          ),
+
       ],
     );
   }

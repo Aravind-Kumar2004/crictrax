@@ -1,25 +1,24 @@
 import 'dart:async';
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 // ─── Ad Model ────────────────────────────────────────────────────────────────
 class AdSlide {
   final String headline;
-  final String tagline;
+  final String description;
+  final List<String> features;
   final String ctaLabel;
   final Color accentColor;
   final IconData icon;
   final String? imagePath;
-  final bool isPortrait;
 
   const AdSlide({
     required this.headline,
-    required this.tagline,
+    required this.description,
+    required this.features,
     required this.ctaLabel,
     required this.accentColor,
     required this.icon,
     this.imagePath,
-    this.isPortrait = false,
   });
 }
 
@@ -49,44 +48,66 @@ class _AdBannerWidgetState extends State<AdBannerWidget>
 
   Timer? _autoTimer;
   int _currentPage = 0;
-  final Map<int, double> _aspectRatios = {}; // index -> width/height
+
+  // ── Fixed TV banner height — never derived from image aspect ratio ────────
+  static const double _bannerHeight = 260.0;
 
   static const _demoSlides = [
     AdSlide(
       headline: 'YOUR BRAND HERE',
-      tagline: 'Reach thousands of cricket fans\nin real-time across every match',
-      ctaLabel: 'ADVERTISE WITH US',
+      description:
+      'Reach thousands of cricket fans in real-time across every live match on CRICTRAX TV.',
+      features: [
+        'Live Streaming',
+        'Tournament Promotion',
+        'Digital Advertising',
+      ],
+      ctaLabel: 'ADVERTISE NOW',
       accentColor: Color(0xFF00D4FF),
       icon: Icons.rocket_launch_rounded,
       imagePath: 'assets/images/ad_1.jpg',
-      isPortrait: false, // landscape — cricket world cup
     ),
     AdSlide(
       headline: 'SPONSOR A TOURNAMENT',
-      tagline: 'Logo placement • Live score overlays\nBroadcast mentions • Digital banners',
+      description:
+      'Get your logo in front of every viewer with broadcast-grade placements and overlays.',
+      features: [
+        'Logo Placement',
+        'Live Score Overlays',
+        'Broadcast Mentions',
+      ],
       ctaLabel: 'GET VISIBILITY',
       accentColor: Color(0xFFFF6B35),
       icon: Icons.emoji_events_rounded,
-      imagePath: 'assets/images/ad_2.jpeg',
-      isPortrait: false, // landscape — Thums Up banner
+      imagePath: 'assets/images/ad_2.png',
     ),
     AdSlide(
       headline: 'PLAY. SCORE. DOMINATE.',
-      tagline: 'The future of local cricket\nis being scored right now',
+      description:
+      'The future of local cricket is being scored right now — join the movement today.',
+      features: [
+        'Real-Time Scoring',
+        'Team Management',
+        'Player Statistics',
+      ],
       ctaLabel: 'JOIN CRICTRAX',
       accentColor: Color(0xFF00E676),
       icon: Icons.sports_cricket_rounded,
       imagePath: 'assets/images/ad_3.jpg',
-      isPortrait: true, // portrait — IPL poster
     ),
     AdSlide(
       headline: 'GO LIVE TODAY',
-      tagline: 'Set up your turf, your teams,\nyour tournament — in minutes',
+      description:
+      'Set up your turf, your teams, your tournament, and start broadcasting in minutes.',
+      features: [
+        'Quick Setup',
+        'Instant Broadcast',
+        'Fan Engagement',
+      ],
       ctaLabel: 'START SCORING',
       accentColor: Color(0xFFFFD600),
       icon: Icons.bolt_rounded,
       imagePath: 'assets/images/ad_4.jpg',
-      isPortrait: false, // landscape
     ),
   ];
 
@@ -109,8 +130,9 @@ class _AdBannerWidgetState extends State<AdBannerWidget>
       vsync: this,
       duration: const Duration(milliseconds: 600),
     );
+    // Horizontal slide only — no zoom / scale.
     _slideAnim = Tween<Offset>(
-      begin: const Offset(0, 0.25),
+      begin: const Offset(0.04, 0),
       end: Offset.zero,
     ).animate(CurvedAnimation(parent: _phraseCtrl, curve: Curves.easeOut));
     _fadeAnim = CurvedAnimation(parent: _phraseCtrl, curve: Curves.easeOut);
@@ -130,20 +152,6 @@ class _AdBannerWidgetState extends State<AdBannerWidget>
     });
   }
 
-  void _resolveAspectRatio(int index, String path) {
-    if (_aspectRatios.containsKey(index)) return;
-    final stream = AssetImage(path).resolve(const ImageConfiguration());
-    late ImageStreamListener listener;
-    listener = ImageStreamListener((info, _) {
-      final ratio = info.image.width / info.image.height;
-      if (mounted) {
-        setState(() => _aspectRatios[index] = ratio);
-      }
-      stream.removeListener(listener);
-    }, onError: (_, __) => stream.removeListener(listener));
-    stream.addListener(listener);
-  }
-
   void _onPageChanged(int page) {
     setState(() => _currentPage = page);
     _phraseCtrl.forward(from: 0);
@@ -160,24 +168,13 @@ class _AdBannerWidgetState extends State<AdBannerWidget>
 
   @override
   Widget build(BuildContext context) {
-    final currentSlide = _slides[_currentPage];
-    if (currentSlide.imagePath != null) {
-      _resolveAspectRatio(_currentPage, currentSlide.imagePath!);
-    }
-    final ratio = _aspectRatios[_currentPage];
-    // Fallback heights while the real aspect ratio is still loading
-    final fallbackHeight = currentSlide.isPortrait ? 420.0 : 260.0;
-    final bannerHeight = ratio != null
-        ? MediaQuery.of(context).size.width / ratio
-        : fallbackHeight;
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        AnimatedContainer(
-          duration: const Duration(milliseconds: 400),
-          curve: Curves.easeInOut,
-          height: bannerHeight.clamp(180.0, 600.0), // keep banner sane on extreme ratios
+        // ── Fixed-height banner — constant across every slide ───────────────
+        SizedBox(
+          height: _bannerHeight,
+          width: double.infinity,
           child: PageView.builder(
             controller: _pageCtrl,
             onPageChanged: _onPageChanged,
@@ -191,12 +188,13 @@ class _AdBannerWidgetState extends State<AdBannerWidget>
             ),
           ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         _buildDotIndicators(),
       ],
     );
   }
 
+  // ── Premium TV dot indicator — small grey dots, glowing accent when active ─
   Widget _buildDotIndicators() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -205,12 +203,22 @@ class _AdBannerWidgetState extends State<AdBannerWidget>
         final color = _slides[i].accentColor;
         return AnimatedContainer(
           duration: const Duration(milliseconds: 300),
-          margin: const EdgeInsets.symmetric(horizontal: 4),
-          width: active ? 24 : 6,
-          height: 6,
+          curve: Curves.easeOut,
+          margin: const EdgeInsets.symmetric(horizontal: 5),
+          width: active ? 10 : 6,
+          height: active ? 10 : 6,
           decoration: BoxDecoration(
-            color: active ? color : color.withOpacity(0.25),
-            borderRadius: BorderRadius.circular(3),
+            color: active ? color : Colors.white.withOpacity(0.22),
+            shape: BoxShape.circle,
+            boxShadow: active
+                ? [
+              BoxShadow(
+                color: color.withOpacity(0.65),
+                blurRadius: 10,
+                spreadRadius: 1.5,
+              ),
+            ]
+                : [],
           ),
         );
       }),
@@ -219,12 +227,11 @@ class _AdBannerWidgetState extends State<AdBannerWidget>
 }
 
 // ─── Single Slide Card ────────────────────────────────────────────────────────
-// Layout: image docked flush to the LEFT edge of the card (no padding, no
-// rounded corners on the image itself — it bleeds into the card boundary),
-// text + CTA left-aligned and top-anchored in the RIGHT panel. A soft
-// gradient at the image's right edge fades it into the dark background so
-// the seam between image and text panel feels intentional, not abrupt.
-// Same structure for both landscape and portrait slides.
+// Layout, fixed 40 / 45 / 15 split:
+//   LEFT   (40%) — image panel, flush to the card edge, BoxFit.cover, never
+//                  stretches, gradient fade into the text panel.
+//   CENTER (45%) — SPONSORED tag, headline, description, 3 feature bullets.
+//   RIGHT  (15%) — large CTA button, rocket icon, "Powered by CRICTRAX".
 class _AdSlideCard extends StatelessWidget {
   final AdSlide slide;
   final Animation<double> glowAnim;
@@ -250,7 +257,7 @@ class _AdSlideCard extends StatelessWidget {
           colors: [
             const Color(0xFF080E1A),
             const Color(0xFF0A1628),
-            slide.accentColor.withOpacity(0.08),
+            slide.accentColor.withOpacity(0.10),
           ],
           begin: Alignment.centerLeft,
           end: Alignment.centerRight,
@@ -261,101 +268,70 @@ class _AdSlideCard extends StatelessWidget {
         ),
         boxShadow: [
           BoxShadow(
-            color: slide.accentColor.withOpacity(0.12),
-            blurRadius: 24,
-            offset: const Offset(0, 6),
+            color: slide.accentColor.withOpacity(0.14),
+            blurRadius: 28,
+            offset: const Offset(0, 8),
+          ),
+          BoxShadow(
+            color: Colors.black.withOpacity(0.35),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
       child: ClipRRect(
-        // Card-level rounding only. The image itself stays square so it
-        // sits flush against the left/top/bottom edges, matching the
-        // reference layout's edge-to-edge image panel.
         borderRadius: BorderRadius.circular(20),
         child: Stack(
           children: [
-            // ── Dot grid (full card background texture) ──────────────────
+            // ── Dot grid texture (full card) ──────────────────────────────
             Positioned.fill(
               child: CustomPaint(painter: _DotGridPainter(slide.accentColor)),
             ),
 
-            // ── Main row: image panel (left, flush) + text panel (right) ──
+            // ── Main row: fixed 40 / 45 / 15 split ────────────────────────
             Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // LEFT: image panel — flush to the card edge, no padding,
-                // no independent rounding. ~43% of width (flex 43:57).
-                if (hasImage)
-                  Expanded(
-                    flex: 43,
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        Image.asset(
-                          slide.imagePath!,
-                          fit: BoxFit.cover,
-                          alignment: Alignment.center,
-                          errorBuilder: (_, __, ___) => Container(
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: [
-                                  const Color(0xFF080E1A),
-                                  slide.accentColor.withOpacity(0.12),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                        // Soft fade at the right edge of the image so it
-                        // dissolves into the text panel's background
-                        // instead of cutting off abruptly.
-                        Positioned(
-                          right: 0, top: 0, bottom: 0,
-                          width: 90,
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.centerLeft,
-                                end: Alignment.centerRight,
-                                colors: [
-                                  const Color(0xFF080E1A).withOpacity(0.0),
-                                  const Color(0xFF080E1A).withOpacity(0.85),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
+                // LEFT (40%) — image panel, flush, no padding.
+                Expanded(
+                  flex: 40,
+                  child: hasImage ? _buildImagePanel() : _buildImageFallback(),
+                ),
+
+                // CENTER (45%) — text content.
+                Expanded(
+                  flex: 45,
+                  child: FadeTransition(
+                    opacity: fadeAnim,
+                    child: SlideTransition(
+                      position: slideAnim,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(28, 22, 20, 20),
+                        child: _buildTextBlock(),
+                      ),
                     ),
                   ),
+                ),
 
-                // RIGHT: text panel — left-aligned, top-anchored.
-                // ~57% of width (flex 57:43), or full width if no image.
+                // RIGHT (15%) — CTA button + branding.
                 Expanded(
-                  flex: hasImage ? 57 : 100,
+                  flex: 15,
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(28, 26, 28, 22),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.max,
-                      children: [
-                        _buildTextBlock(withCta: false),
-                        const Spacer(),
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: _buildCtaColumn(),
-                        ),
-                      ],
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 20,
                     ),
+                    child: _buildCtaColumn(),
                   ),
                 ),
               ],
             ),
 
-            // ── Left accent stripe (drawn last so it sits on top) ─────────
+            // ── Left accent stripe ─────────────────────────────────────────
             Positioned(
-              left: 0, top: 0, bottom: 0,
+              left: 0,
+              top: 0,
+              bottom: 0,
               child: AnimatedBuilder(
                 animation: glowAnim,
                 builder: (_, __) => Container(
@@ -375,8 +351,8 @@ class _AdSlideCard extends StatelessWidget {
                     ),
                     boxShadow: [
                       BoxShadow(
-                        color: slide.accentColor
-                            .withOpacity(glowAnim.value * 0.7),
+                        color:
+                        slide.accentColor.withOpacity(glowAnim.value * 0.7),
                         blurRadius: 14,
                         spreadRadius: 1,
                       ),
@@ -391,11 +367,69 @@ class _AdSlideCard extends StatelessWidget {
     );
   }
 
-  // ── Text block (headline + tagline + optional inline CTA) ───────────────
-  Widget _buildTextBlock({required bool withCta}) {
+  // ── LEFT: image panel — fixed-height card, image always centered/cover ───
+  Widget _buildImagePanel() {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // BoxFit.cover + centered alignment guarantees no stretch/distortion
+        // regardless of the source image's own aspect ratio (portrait or
+        // landscape) since the panel's own bounds are fixed by the flex.
+        Image.asset(
+          slide.imagePath!,
+          fit: BoxFit.cover,
+          alignment: Alignment.center,
+          errorBuilder: (_, __, ___) => _buildImageFallback(),
+        ),
+        // Gradient fade from the image into the text panel.
+        Positioned(
+          right: 0,
+          top: 0,
+          bottom: 0,
+          width: 80,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+                colors: [
+                  const Color(0xFF080E1A).withOpacity(0.0),
+                  const Color(0xFF080E1A).withOpacity(0.92),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildImageFallback() {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            const Color(0xFF080E1A),
+            slide.accentColor.withOpacity(0.14),
+          ],
+        ),
+      ),
+      child: Center(
+        child: Icon(
+          slide.icon,
+          color: slide.accentColor.withOpacity(0.4),
+          size: 48,
+        ),
+      ),
+    );
+  }
+
+  // ── CENTER: SPONSORED tag + headline + description + feature bullets ─────
+  Widget _buildTextBlock() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
+      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: MainAxisSize.max,
       children: [
         // SPONSORED label
         Row(
@@ -404,7 +438,8 @@ class _AdSlideCard extends StatelessWidget {
             AnimatedBuilder(
               animation: glowAnim,
               builder: (_, __) => Container(
-                width: 8, height: 8,
+                width: 7,
+                height: 7,
                 decoration: BoxDecoration(
                   color: slide.accentColor.withOpacity(glowAnim.value),
                   shape: BoxShape.circle,
@@ -417,81 +452,135 @@ class _AdSlideCard extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(width: 7),
+            const SizedBox(width: 8),
             Text(
               'SPONSORED',
               style: TextStyle(
                 color: slide.accentColor.withOpacity(0.9),
-                fontSize: 10,
+                fontSize: 11,
                 fontWeight: FontWeight.w800,
                 letterSpacing: 3.0,
               ),
             ),
           ],
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 10),
 
-        // Headline
-        FadeTransition(
-          opacity: fadeAnim,
-          child: SlideTransition(
-            position: slideAnim,
-            child: Text(
-              slide.headline,
-              textAlign: TextAlign.left,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 26,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 0.4,
-                height: 1.15,
-                shadows: [Shadow(color: Colors.black54, blurRadius: 8)],
-              ),
-            ),
+        // Headline — 34px bold white
+        Text(
+          slide.headline,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 34,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 0.2,
+            height: 1.1,
+            shadows: [Shadow(color: Colors.black54, blurRadius: 8)],
           ),
         ),
         const SizedBox(height: 8),
 
-        // Tagline
-        FadeTransition(
-          opacity: fadeAnim,
-          child: Text(
-            slide.tagline,
-            textAlign: TextAlign.left,
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.55),
-              fontSize: 13,
-              height: 1.6,
-              letterSpacing: 0.2,
-              shadows: const [Shadow(color: Colors.black54, blurRadius: 6)],
+        // Description — 16px, 70% white
+        Text(
+          slide.description,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.70),
+            fontSize: 16,
+            height: 1.4,
+            letterSpacing: 0.1,
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // Feature bullets — 14px
+        ...slide.features.map(
+              (f) => Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.check_circle_rounded,
+                    color: slide.accentColor, size: 15),
+                const SizedBox(width: 8),
+                Text(
+                  f,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.85),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
             ),
           ),
         ),
-
-        // Optional inline CTA (kept for backwards-compat; main layout above
-        // always passes withCta: false and places the CTA separately).
-        if (withCta) ...[
-          const SizedBox(height: 20),
-          _buildCtaColumn(),
-        ],
       ],
     );
   }
 
-  // ── Icon orb + CTA button ────────────────────────────────────────────────
+  // ── RIGHT: CTA button + rocket icon + "Powered by CRICTRAX" ──────────────
   Widget _buildCtaColumn() {
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        // Icon orb
+        // Large CTA button
+        GestureDetector(
+          onTap: () {},
+          child: AnimatedBuilder(
+            animation: glowAnim,
+            builder: (_, __) => Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    slide.accentColor,
+                    slide.accentColor.withOpacity(0.7),
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: slide.accentColor.withOpacity(glowAnim.value * 0.5),
+                    blurRadius: 16,
+                    spreadRadius: 1,
+                  ),
+                ],
+              ),
+              child: Text(
+                slide.ctaLabel,
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.8,
+                  height: 1.2,
+                ),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // Rocket icon orb
         AnimatedBuilder(
           animation: glowAnim,
           builder: (_, __) => Container(
-            width: 68, height: 68,
+            width: 44,
+            height: 44,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: Colors.black.withOpacity(0.4),
+              color: Colors.black.withOpacity(0.35),
               border: Border.all(
                 color: slide.accentColor.withOpacity(glowAnim.value * 0.55),
                 width: 1.5,
@@ -499,47 +588,33 @@ class _AdSlideCard extends StatelessWidget {
               boxShadow: [
                 BoxShadow(
                   color: slide.accentColor.withOpacity(glowAnim.value * 0.3),
-                  blurRadius: 20,
+                  blurRadius: 14,
                 ),
               ],
             ),
-            child: Icon(slide.icon, color: slide.accentColor, size: 32),
+            child: Icon(slide.icon, color: slide.accentColor, size: 20),
           ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 10),
 
-        // CTA button
-        GestureDetector(
-          onTap: () {},
-          child: AnimatedBuilder(
-            animation: glowAnim,
-            builder: (_, __) => Container(
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-              decoration: BoxDecoration(
-                color: slide.accentColor.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                  color: slide.accentColor
-                      .withOpacity(0.3 + glowAnim.value * 0.2),
-                  width: 1,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: slide.accentColor.withOpacity(glowAnim.value * 0.2),
-                    blurRadius: 12,
-                  ),
-                ],
-              ),
-              child: Text(
-                slide.ctaLabel,
-                style: TextStyle(
-                  color: slide.accentColor,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 1.4,
-                ),
-              ),
-            ),
+        // Powered by CRICTRAX
+        Text(
+          'Powered by',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.35),
+            fontSize: 9,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        Text(
+          'CRICTRAX',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: slide.accentColor.withOpacity(0.85),
+            fontSize: 10,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 1.0,
           ),
         ),
       ],

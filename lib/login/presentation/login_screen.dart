@@ -69,7 +69,7 @@ class _LoginScreenState extends State<LoginScreen>
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
-    final playerWidth = size.width * 0.26;   // equal width for BOTH players
+    final playerWidth = size.width * 0.40;
     final playerHeight = size.height * 0.85;
 
     return Scaffold(
@@ -126,22 +126,13 @@ class _LoginScreenState extends State<LoginScreen>
 
           // ── 5. Left player PNG — clipped to a fixed width so it can't balloon ──
           Positioned(
-            left: 10,
+            left: 0,
             bottom: 0,
-            child: ClipRect(
-              child: SizedBox(
-                width: playerWidth,
-                height: playerHeight,
-                child: Align(
-                  alignment: Alignment.bottomLeft,
-                  child: Image.asset(
-                    'assets/images/players/login_left_player.png',
-                    height: playerHeight,
-                    fit: BoxFit.fitHeight,
-                    alignment: Alignment.bottomLeft,
-                  ),
-                ),
-              ),
+            child: Image.asset(
+              'assets/images/players/login_left_player.png',
+              height: playerHeight,
+              fit: BoxFit.contain,
+              alignment: Alignment.bottomLeft,
             ),
           ),
 
@@ -149,20 +140,11 @@ class _LoginScreenState extends State<LoginScreen>
           Positioned(
             right: 0,
             bottom: 0,
-            child: ClipRect(
-              child: SizedBox(
-                width: playerWidth,
-                height: playerHeight,
-                child: Align(
-                  alignment: Alignment.bottomRight,
-                  child: Image.asset(
-                    'assets/images/players/login_right_player.png',
-                    height: playerHeight,
-                    fit: BoxFit.fitHeight,
-                    alignment: Alignment.bottomRight,
-                  ),
-                ),
-              ),
+            child: Image.asset(
+              'assets/images/players/login_right_player.png',
+              height: playerHeight,
+              fit: BoxFit.contain,
+              alignment: Alignment.bottomRight,
             ),
           ),
 
@@ -754,23 +736,30 @@ class _TvQrSectionState extends State<TvQrSection>
   // ── Build ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
+    // ── Responsive sizing (relative to actual screen, clamped so it never
+    //    balloons on TV panels reporting large logical sizes) ───────────────
+    final screenSize = MediaQuery.of(context).size;
+    final cardWidth = (screenSize.width * 0.24).clamp(260.0, 340.0);
+    final qrSize = (screenSize.width * 0.11).clamp(140.0, 190.0);
+    final loadingCardHeight = (screenSize.height * 0.24).clamp(160.0, 200.0);
+
     return AnimatedSwitcher(
       duration: const Duration(milliseconds: 400),
       switchInCurve: Curves.easeOut,
       switchOutCurve: Curves.easeIn,
-      child: _buildContent(),
+      child: _buildContent(cardWidth, qrSize, loadingCardHeight),
     );
   }
 
-  Widget _buildContent() {
-    if (_linking) return _buildLinkingState();
-    if (_expired) return _buildExpiredState();
-    if (_qrData == null) return _buildLoadingState();
-    return _buildQrCard();
+  Widget _buildContent(double cardWidth, double qrSize, double loadingCardHeight) {
+    if (_linking) return _buildLinkingState(cardWidth);
+    if (_expired) return _buildExpiredState(cardWidth);
+    if (_qrData == null) return _buildLoadingState(cardWidth, loadingCardHeight);
+    return _buildQrCard(cardWidth, qrSize);
   }
 
   // ── QR Glass Card ─────────────────────────────────────────────────────────
-  Widget _buildQrCard() {
+  Widget _buildQrCard(double cardWidth, double qrSize) {
     final mins =
     (_secondsLeft ~/ 60).toString().padLeft(2, '0');
     final secs =
@@ -804,11 +793,11 @@ class _TvQrSectionState extends State<TvQrSection>
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
           child: Container(
-            width: 320,                                    // was 340
-            padding: const EdgeInsets.fromLTRB(24, 20, 24, 22), // was 28,24,28,28
+            width: cardWidth,
+            padding: const EdgeInsets.fromLTRB(24, 20, 24, 22),
             decoration: BoxDecoration(
               color: Colors.white.withOpacity(0.07),
-              borderRadius: BorderRadius.circular(24),      // was 28
+              borderRadius: BorderRadius.circular(24),
               border: Border.all(
                 color: _C.accent.withOpacity(0.4),
                 width: 1.5,
@@ -866,6 +855,7 @@ class _TvQrSectionState extends State<TvQrSection>
                 _PremiumQrCode(
                   qrData: _qrData!,
                   pulseAnim: _pulseAnim,
+                  qrSize: qrSize,
                 ),
 
                 const SizedBox(height: 14),
@@ -884,7 +874,7 @@ class _TvQrSectionState extends State<TvQrSection>
                       text: TextSpan(
                         style: TextStyle(
                           color: Colors.white.withOpacity(0.45),
-                          fontSize: 13,
+                          fontSize: 10,
                         ),
                         children: [
                           const TextSpan(text: 'Scan using the '),
@@ -920,14 +910,14 @@ class _TvQrSectionState extends State<TvQrSection>
   }
 
   // ── Linking State ─────────────────────────────────────────────────────────
-  Widget _buildLinkingState() {
+  Widget _buildLinkingState(double cardWidth) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(28),
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
         child: Container(
           key: const ValueKey('linking'),
-          width: 340,
+          width: cardWidth,
           padding: const EdgeInsets.symmetric(
               horizontal: 40, vertical: 48),
           decoration: BoxDecoration(
@@ -1002,14 +992,14 @@ class _TvQrSectionState extends State<TvQrSection>
   }
 
   // ── Expired State ─────────────────────────────────────────────────────────
-  Widget _buildExpiredState() {
+  Widget _buildExpiredState(double cardWidth) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(28),
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
         child: Container(
           key: const ValueKey('expired'),
-          width: 340,
+          width: cardWidth,
           padding: const EdgeInsets.symmetric(
               horizontal: 40, vertical: 48),
           decoration: BoxDecoration(
@@ -1111,15 +1101,15 @@ class _TvQrSectionState extends State<TvQrSection>
   }
 
   // ── Loading State ─────────────────────────────────────────────────────────
-  Widget _buildLoadingState() {
+  Widget _buildLoadingState(double cardWidth, double cardHeight) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(28),
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
         child: Container(
           key: const ValueKey('loading'),
-          width: 340,
-          height: 200,
+          width: cardWidth,
+          height: cardHeight,
           decoration: BoxDecoration(
             color: Colors.white.withOpacity(0.07),
             borderRadius: BorderRadius.circular(28),
@@ -1161,10 +1151,12 @@ class _TvQrSectionState extends State<TvQrSection>
 class _PremiumQrCode extends StatelessWidget {
   final String qrData;
   final Animation<double> pulseAnim;
+  final double qrSize;
 
   const _PremiumQrCode({
     required this.qrData,
     required this.pulseAnim,
+    required this.qrSize,
   });
 
   @override
@@ -1197,7 +1189,7 @@ class _PremiumQrCode extends StatelessWidget {
         ),
         child: QrImageView(
           data: qrData,
-          size: 180,
+          size: qrSize,
           backgroundColor: Colors.white,
         ),
       ),

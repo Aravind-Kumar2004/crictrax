@@ -72,6 +72,8 @@ flutter:
       - assets/audio/
       - assets/images/backgrounds/
       - assets/images/players/
+      - assets/images/tournaments/
+      - assets/audio/commentary/
 
 
 

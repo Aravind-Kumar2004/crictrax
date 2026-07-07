@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../../dashboard/domain/entities/tournament_entity.dart';
 import '../../background/background_manager.dart';
+import '../../splash/presentation/match_splash_screen.dart';
 import '../data/models/match_model.dart';
 import '../data/repositories/tournament_detail_repository.dart';
 import '../../match_detail/presentation/match_detail_screen.dart';
@@ -9,6 +10,12 @@ import 'widgets/match_card_widget.dart';
 import '../../live_score/presentation/live_score_screen.dart';
 import 'widgets/fixtures_bracket_widget.dart';
 import '../../background/dynamic_background_view.dart';
+import 'widgets/left_navigation_drawer.dart';
+import 'widgets/hero_banner.dart';
+import 'widgets/statistics_section.dart';
+import 'widgets/featured_live_match.dart';
+import 'widgets/next_fixtures_section.dart';
+import 'widgets/recent_results_section.dart';
 
 // ─── Design Tokens ────────────────────────────────────────────────────────────
 class _C {
@@ -61,30 +68,33 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
   late AnimationController _pulseCtrl;
   late Animation<double> _pulseAnim;
 
+  // ── UI-only state for the new permanent TV drawer (not business logic) ──────
+  NavSection _navSection = NavSection.home;
+
   @override
   void initState() {
     super.initState();
-    _backgroundManager = BackgroundManager<MatchTab>(
-      leftPlayerAsset: 'assets/images/players/left_player.png',
-
-      tabAssets: {
-        MatchTab.fixtures: const TabPlayerAssets(
-          rightPlayerAsset: 'assets/images/players/fixtures_player.png',
-        ),
-
-        MatchTab.live: const TabPlayerAssets(
-          rightPlayerAsset: 'assets/images/players/live_player.png',
-        ),
-
-        MatchTab.upcoming: const TabPlayerAssets(
-          rightPlayerAsset: 'assets/images/players/upcoming_player.png',
-        ),
-
-        MatchTab.completed: const TabPlayerAssets(
-          rightPlayerAsset: 'assets/images/players/completed_player.png',
-        ),
-      },
-    );
+    // _backgroundManager = BackgroundManager<MatchTab>(
+    //   leftPlayerAsset: 'assets/images/players/left_player.png',
+    //
+    //   tabAssets: {
+    //     MatchTab.fixtures: const TabPlayerAssets(
+    //       rightPlayerAsset: 'assets/images/players/fixtures_player.png',
+    //     ),
+    //
+    //     MatchTab.live: const TabPlayerAssets(
+    //       rightPlayerAsset: 'assets/images/players/live_player.png',
+    //     ),
+    //
+    //     MatchTab.upcoming: const TabPlayerAssets(
+    //       rightPlayerAsset: 'assets/images/players/upcoming_player.png',
+    //     ),
+    //
+    //     MatchTab.completed: const TabPlayerAssets(
+    //       rightPlayerAsset: 'assets/images/players/completed_player.png',
+    //     ),
+    //   },
+    // );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _backgroundManager.precacheAll(context);
     });
@@ -150,14 +160,23 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
   void _openMatch(TournamentMatchModel m) {
     if (m.isLive) {
       Navigator.push(context, MaterialPageRoute(
-        builder: (_) => LiveScoreScreen(
-          matchId: m.id,
-          tournamentId: widget.tournamentId,
+        builder: (_) => MatchSplashScreen(
           team1Name: m.teamId1Name,
           team2Name: m.teamId2Name,
-          team1Id: m.teamId1,
-          team2Id: m.teamId2,
-          sessionId: widget.sessionId,
+          duration: const Duration(seconds: 3),
+          onComplete: () {
+            Navigator.pushReplacement(context, MaterialPageRoute(
+              builder: (_) => LiveScoreScreen(
+                matchId: m.id,
+                tournamentId: widget.tournamentId,
+                team1Name: m.teamId1Name,
+                team2Name: m.teamId2Name,
+                team1Id: m.teamId1,
+                team2Id: m.teamId2,
+                sessionId: widget.sessionId,
+              ),
+            ));
+          },
         ),
       ));
     } else {
@@ -177,85 +196,171 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
     }
   }
 
+  // ── Derived, display-only figures for the Home page (no new queries) ────────
+  int get _uniqueTeamsCount {
+    final ids = <String>{};
+    for (final m in _all) {
+      if (m.teamId1.isNotEmpty) ids.add(m.teamId1);
+      if (m.teamId2.isNotEmpty) ids.add(m.teamId2);
+    }
+    return ids.length;
+  }
+
+  TournamentMatchModel? get _featuredLiveMatch => _live.isNotEmpty ? _live.first : null;
+
   // ── Build ────────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     if (_loading) return _buildLoadingScreen();
 
-
     return Scaffold(
       backgroundColor: _C.bg,
-      body: DynamicBackgroundView<MatchTab>(
-        backgroundImage: 'assets/images/backgrounds/tournament_bg.jpg',
+      body: Stack(
+        children: [
 
-        manager: _backgroundManager,
-
-        selectedTab: _selectedTab,
-
-        foreground: Stack(
-          children: [
-
-            // Ambient glow
-            Positioned(
-              top: -100,
-              left: -60,
-              child: _Glow(
-                color: _C.fixtures,
-                size: 340,
-              ),
+          Positioned.fill(
+            child: Image.asset(
+              'assets/images/backgrounds/login_bg.jpg',
+              fit: BoxFit.cover,
             ),
+          ),
 
-            Positioned(
-              bottom: -80,
-              right: -40,
-              child: _Glow(
-                color: _C.accent,
-                size: 280,
-              ),
+          Positioned.fill(
+            child: Container(
+              color: Colors.black.withOpacity(0.45),
             ),
+          ),
 
-            // Your existing UI
+
+            // ── New permanent TV drawer + page content ─────────────────────
             Row(
               children: [
-                _LeftSidebar(
-                  tournament: widget.tournament,
-                  selectedTab: _selectedTab,
-                  liveCount: _live.length,
-                  upcomingCount: _upcoming.length,
-                  completedCount: _completed.length,
-                  pulseAnim: _pulseAnim,
-                  onTabChanged: (t) => setState(() => _selectedTab = t),
+                LeftNavigationDrawer(
+                  selected: _navSection,
+                  onSelect: (section) => setState(() => _navSection = section),
                   onBack: () => Navigator.pop(context),
                 ),
 
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _TournamentHeaderCard(
-                        tournament: widget.tournament,
-                      ),
-
-                      _HorizontalTabBar(
-                        selectedTab: _selectedTab,
-                        liveCount: _live.length,
-                        upcomingCount: _upcoming.length,
-                        completedCount: _completed.length,
-                        pulseAnim: _pulseAnim,
-                        onTabChanged: (t) =>
-                            setState(() => _selectedTab = t),
-                      ),
-
-                      Expanded(
-                        child: _buildContentPanel(),
-                      ),
-                    ],
+                  child: FocusTraversalGroup(
+                    policy: ReadingOrderTraversalPolicy(),
+                    child: _buildSectionContent(),
                   ),
                 ),
               ],
             ),
           ],
         ),
+    );
+
+  }
+
+  Widget _buildSectionContent() {
+    switch (_navSection) {
+      case NavSection.home:
+        return _buildHomePage();
+      case NavSection.fixtures:
+        return _buildFixturesPage();
+      case NavSection.teams:
+        return _buildUnavailableSection(
+          icon: Icons.groups_rounded,
+          title: 'Teams',
+          message: 'Team information for this tournament isn\'t available here yet.',
+        );
+      case NavSection.pointsTable:
+        return _buildUnavailableSection(
+          icon: Icons.leaderboard_rounded,
+          title: 'Points Table',
+          message: 'The points table for this tournament isn\'t available here yet.',
+        );
+    }
+  }
+
+  // ── HOME PAGE ────────────────────────────────────────────────────────────────
+  Widget _buildHomePage() {
+    return SingleChildScrollView(
+      physics: const BouncingScrollPhysics(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          HeroBanner(tournament: widget.tournament),
+          StatisticsSection(
+            teamsCount: _uniqueTeamsCount,
+            matchesCount: _all.length,
+            liveCount: _live.length,
+            upcomingCount: _upcoming.length,
+            completedCount: _completed.length,
+          ),
+          FeaturedLiveMatch(
+            match: _featuredLiveMatch,
+            onWatchLive: _openMatch,
+          ),
+          NextFixturesSection(
+            upcomingMatches: _upcoming,
+            onTap: _openMatch,
+          ),
+          RecentResultsSection(
+            completedMatches: _completed,
+            onTap: _openMatch,
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── FIXTURES PAGE (existing header + tab bar + content panel, unchanged) ────
+  Widget _buildFixturesPage() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _TournamentHeaderCard(tournament: widget.tournament),
+        _HorizontalTabBar(
+          selectedTab: _selectedTab,
+          liveCount: _live.length,
+          upcomingCount: _upcoming.length,
+          completedCount: _completed.length,
+          pulseAnim: _pulseAnim,
+          onTabChanged: (t) => setState(() => _selectedTab = t),
+        ),
+        Expanded(child: _buildContentPanel()),
+      ],
+    );
+  }
+
+  // ── Graceful empty state for sections with no data source yet ───────────────
+  Widget _buildUnavailableSection({
+    required IconData icon,
+    required String title,
+    required String message,
+  }) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 88, height: 88,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: _C.accent.withOpacity(0.05),
+              border: Border.all(color: _C.accent.withOpacity(0.15), width: 1.5),
+            ),
+            child: Icon(icon, color: _C.accent.withOpacity(0.3), size: 32),
+          ),
+          const SizedBox(height: 22),
+          Text(title,
+              style: TextStyle(
+                  color: Colors.white.withOpacity(0.55),
+                  fontSize: 20, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 60),
+            child: Text(message,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    color: Colors.white.withOpacity(0.25),
+                    fontSize: 13, height: 1.5)),
+          ),
+        ],
       ),
     );
   }
@@ -377,307 +482,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// LEFT SIDEBAR  (220 px, semi-transparent so player image bleeds through)
-// ═══════════════════════════════════════════════════════════════════════════════
-class _LeftSidebar extends StatelessWidget {
-  final TournamentEntity tournament;
-  final MatchTab selectedTab;
-  final int liveCount, upcomingCount, completedCount;
-  final Animation<double> pulseAnim;
-  final ValueChanged<MatchTab> onTabChanged;
-  final VoidCallback onBack;
-
-  const _LeftSidebar({
-    required this.tournament,
-    required this.selectedTab,
-    required this.liveCount,
-    required this.upcomingCount,
-    required this.completedCount,
-    required this.pulseAnim,
-    required this.onTabChanged,
-    required this.onBack,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 220,
-      decoration: BoxDecoration(
-        // Semi-transparent so the player image is faintly visible behind it
-        color: _C.surface.withOpacity(0.82),
-        border: Border(
-          right: BorderSide(color: Colors.white.withOpacity(0.06)),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // ── Logo bar ────────────────────────────────────────────────────────
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 22, 16, 18),
-            child: Row(children: [
-              Container(
-                width: 32, height: 32,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(8),
-                  gradient: const LinearGradient(
-                    colors: [_C.accent, _C.accentDim],
-                    begin: Alignment.topLeft, end: Alignment.bottomRight,
-                  ),
-                  boxShadow: [BoxShadow(color: _C.accent.withOpacity(0.35), blurRadius: 10)],
-                ),
-                child: const Icon(Icons.sports_cricket, color: Colors.white, size: 16),
-              ),
-              const SizedBox(width: 8),
-              RichText(
-                text: TextSpan(children: [
-                  TextSpan(
-                    text: 'CRICTRAX ',
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.8),
-                      fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.5,
-                    ),
-                  ),
-                  const TextSpan(
-                    text: 'TV',
-                    style: TextStyle(
-                      color: _C.accent,
-                      fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.5,
-                    ),
-                  ),
-                ]),
-              ),
-            ]),
-          ),
-
-          // ── Back button ─────────────────────────────────────────────────────
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14),
-            child: Focus(
-              child: Builder(builder: (ctx) {
-                final f = Focus.of(ctx).hasFocus;
-                return GestureDetector(
-                  onTap: onBack,
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 180),
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                    decoration: BoxDecoration(
-                      color: f
-                          ? _C.accent.withOpacity(0.12)
-                          : Colors.white.withOpacity(0.03),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: f
-                            ? _C.accent.withOpacity(0.35)
-                            : Colors.white.withOpacity(0.07),
-                      ),
-                    ),
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      Icon(Icons.arrow_back_rounded,
-                          color: f
-                              ? _C.accent
-                              : Colors.white.withOpacity(0.45),
-                          size: 16),
-                      const SizedBox(width: 8),
-                      Text('Back',
-                          style: TextStyle(
-                            color: f
-                                ? _C.accent
-                                : Colors.white.withOpacity(0.4),
-                            fontSize: 13, fontWeight: FontWeight.w600,
-                          )),
-                    ]),
-                  ),
-                );
-              }),
-            ),
-          ),
-
-          const SizedBox(height: 22),
-          _Divider(),
-          const SizedBox(height: 18),
-
-          // ── Nav tiles ───────────────────────────────────────────────────────
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Column(children: [
-              _NavTile(
-                icon: Icons.calendar_today_rounded,
-                label: 'Fixtures',
-                color: _C.fixtures,
-                count: null,
-                isSelected: selectedTab == MatchTab.fixtures,
-                onTap: () => onTabChanged(MatchTab.fixtures),
-              ),
-              const SizedBox(height: 6),
-              _NavTile(
-                icon: Icons.sensors_rounded,
-                label: 'Live',
-                color: _C.live,
-                count: liveCount,
-                isSelected: selectedTab == MatchTab.live,
-                onTap: () => onTabChanged(MatchTab.live),
-                pulseAnim: liveCount > 0 ? pulseAnim : null,
-              ),
-              const SizedBox(height: 6),
-              _NavTile(
-                icon: Icons.schedule_rounded,
-                label: 'Upcoming',
-                color: _C.upcoming,
-                count: upcomingCount,
-                isSelected: selectedTab == MatchTab.upcoming,
-                onTap: () => onTabChanged(MatchTab.upcoming),
-              ),
-              const SizedBox(height: 6),
-              _NavTile(
-                icon: Icons.check_circle_rounded,
-                label: 'Completed',
-                color: _C.completed,
-                count: completedCount,
-                isSelected: selectedTab == MatchTab.completed,
-                onTap: () => onTabChanged(MatchTab.completed),
-              ),
-            ]),
-          ),
-
-          const Spacer(),
-
-          // ── Status badge at bottom ──────────────────────────────────────────
-          Padding(
-            padding: const EdgeInsets.fromLTRB(14, 0, 14, 26),
-            child: _StatusBadge(status: tournament.status),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ── Nav Tile ──────────────────────────────────────────────────────────────────
-class _NavTile extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final Color color;
-  final int? count;
-  final bool isSelected;
-  final VoidCallback onTap;
-  final Animation<double>? pulseAnim;
-
-  const _NavTile({
-    required this.icon,
-    required this.label,
-    required this.color,
-    required this.count,
-    required this.isSelected,
-    required this.onTap,
-    this.pulseAnim,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Focus(
-      child: Builder(builder: (ctx) {
-        final focused = Focus.of(ctx).hasFocus;
-        final active  = focused || isSelected;
-        return GestureDetector(
-          onTap: onTap,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-            decoration: BoxDecoration(
-              color: active ? color.withOpacity(0.12) : Colors.transparent,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(
-                color: active
-                    ? color.withOpacity(0.4)
-                    : Colors.white.withOpacity(0.05),
-              ),
-              boxShadow: active
-                  ? [BoxShadow(color: color.withOpacity(0.14), blurRadius: 12)]
-                  : [],
-            ),
-            child: Row(children: [
-              pulseAnim != null
-                  ? AnimatedBuilder(
-                animation: pulseAnim!,
-                builder: (_, __) => Icon(icon,
-                    color: color.withOpacity(0.5 + 0.5 * pulseAnim!.value),
-                    size: 15),
-              )
-                  : Icon(icon,
-                  color: active ? color : Colors.white.withOpacity(0.25),
-                  size: 15),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(label,
-                    style: TextStyle(
-                      color: active
-                          ? Colors.white
-                          : Colors.white.withOpacity(0.4),
-                      fontSize: 13,
-                      fontWeight: active ? FontWeight.w700 : FontWeight.w400,
-                    )),
-              ),
-              if (count != null && count! > 0)
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: color.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: color.withOpacity(0.3)),
-                  ),
-                  child: Text('$count',
-                      style: TextStyle(
-                          color: color, fontSize: 11, fontWeight: FontWeight.w800)),
-                ),
-            ]),
-          ),
-        );
-      }),
-    );
-  }
-}
-
-// ── Status Badge (bottom of sidebar) ─────────────────────────────────────────
-class _StatusBadge extends StatelessWidget {
-  final String status;
-  const _StatusBadge({required this.status});
-
-  @override
-  Widget build(BuildContext context) {
-    final Color color;
-    final IconData icon;
-    switch (status) {
-      case 'Active':
-        color = _C.success; icon = Icons.circle;
-      case 'Upcoming':
-        color = _C.accent;  icon = Icons.schedule_rounded;
-      default:
-        color = _C.completed; icon = Icons.check_circle_rounded;
-    }
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.07),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: color.withOpacity(0.2)),
-      ),
-      child: Row(children: [
-        Icon(icon, color: color, size: 12),
-        const SizedBox(width: 8),
-        Text(
-          '$status Tournament',
-          style: TextStyle(
-              color: color, fontSize: 11,
-              fontWeight: FontWeight.w700, letterSpacing: 0.3),
-        ),
-      ]),
-    );
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// TOURNAMENT HEADER CARD  (top of main content — matching reference image 5)
+// TOURNAMENT HEADER CARD  (used on the Fixtures page — unchanged from before)
 // ═══════════════════════════════════════════════════════════════════════════════
 class _TournamentHeaderCard extends StatelessWidget {
   final TournamentEntity tournament;
@@ -691,9 +496,6 @@ class _TournamentHeaderCard extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── Tournament logo / trophy ──────────────────────────────────────
-          // TODO: Replace with your tournament emblem image:
-          //   Image.asset('assets/images/tournament_logo.png', width: 90, height: 90, fit: BoxFit.cover)
           Container(
             width: 90, height: 90,
             decoration: BoxDecoration(
@@ -704,7 +506,7 @@ class _TournamentHeaderCard extends StatelessWidget {
             ),
             clipBehavior: Clip.antiAlias,
             child: Image.asset(
-              'assets/images/tournament_logo.png',
+              'assets/images/tournaments/default.png',
               fit: BoxFit.cover,
               errorBuilder: (_, __, ___) => const Icon(
                   Icons.emoji_events_rounded, color: _C.fixtures, size: 36),
@@ -712,7 +514,6 @@ class _TournamentHeaderCard extends StatelessWidget {
           ),
           const SizedBox(width: 20),
 
-          // ── Name + meta chips ─────────────────────────────────────────────
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -738,7 +539,6 @@ class _TournamentHeaderCard extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 12),
-                // Meta chips row — mirrors the reference image chips
                 Wrap(
                   spacing: 10, runSpacing: 8,
                   children: [
@@ -771,14 +571,12 @@ class _TournamentHeaderCard extends StatelessWidget {
             ),
           ),
 
-          // ── Active status badge (top-right, matches image 5) ───────────────
           _StatusBadge(status: t.status),
         ],
       ),
     );
   }
 
-  // Safely read startDate/endDate from entity (they exist per your live data)
   bool _hasField(TournamentEntity t, String field) {
     try {
       final dyn = t as dynamic;
@@ -830,8 +628,46 @@ class _MetaChip extends StatelessWidget {
   }
 }
 
+// ── Status Badge (reused by header card and status views) ───────────────────
+class _StatusBadge extends StatelessWidget {
+  final String status;
+  const _StatusBadge({required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    final Color color;
+    final IconData icon;
+    switch (status) {
+      case 'Active':
+        color = _C.success; icon = Icons.circle;
+      case 'Upcoming':
+        color = _C.accent;  icon = Icons.schedule_rounded;
+      default:
+        color = _C.completed; icon = Icons.check_circle_rounded;
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.07),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withOpacity(0.2)),
+      ),
+      child: Row(children: [
+        Icon(icon, color: color, size: 12),
+        const SizedBox(width: 8),
+        Text(
+          '$status Tournament',
+          style: TextStyle(
+              color: color, fontSize: 11,
+              fontWeight: FontWeight.w700, letterSpacing: 0.3),
+        ),
+      ]),
+    );
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
-// HORIZONTAL TAB BAR  (Fixtures / Live / Upcoming / Completed)
+// HORIZONTAL TAB BAR  (Fixtures page — unchanged from before)
 // ═══════════════════════════════════════════════════════════════════════════════
 class _HorizontalTabBar extends StatelessWidget {
   final MatchTab selectedTab;
@@ -957,25 +793,6 @@ class _TabPill extends StatelessWidget {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-class _Divider extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Container(
-        height: 1,
-        decoration: BoxDecoration(
-          gradient: LinearGradient(colors: [
-            Colors.transparent,
-            Colors.white.withOpacity(0.08),
-            Colors.transparent,
-          ]),
-        ),
-      ),
-    );
-  }
-}
-
 class _Glow extends StatelessWidget {
   final Color color;
   final double size;
