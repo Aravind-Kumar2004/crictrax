@@ -6,40 +6,42 @@ import 'package:flutter/material.dart';
 import '../../services/commentary_audio_service.dart';
 import '../data/models/repositories/live_score_repository.dart';
 
+
 // ─── Design Tokens ────────────────────────────────────────────────────────────
 class _C {
-  static const bg        = Color(0xFF050B14);
-  static const surface   = Color(0xFF0A1628);
-  static const surfaceH  = Color(0xFF0F1E35);
-  static const card      = Color(0xFF0C1830);
-  static const cardBorder= Color(0x14FFFFFF);
-  static const accent    = Color(0xFF3FD6EE);
+  static const bg = Color(0xFF050B14);
+  static const surface = Color(0xFF0A1628);
+  static const surfaceH = Color(0xFF0F1E35);
+  static const card = Color(0xFF0C1830);
+  static const cardBorder = Color(0x14FFFFFF);
+  static const accent = Color(0xFF3FD6EE);
   static const accentDim = Color(0xFF0066CC);
-  static const live      = Color(0xFFFF3D3D);
-  static const orange    = Color(0xFFFF7A45);
-  static const gold      = Color(0xFFFFD700);
-  static const success   = Color(0xFF00E676);
-  static const warning   = Color(0xFFFFB300);
-  static const purple    = Color(0xFF8E5CFF);
-  static const danger    = Color(0xFFFF3D3D);
-  static const textDim   = Color(0xFF7C93B3);
+  static const live = Color(0xFFFF3D3D);
+  static const orange = Color(0xFFFF7A45);
+  static const gold = Color(0xFFFFD700);
+  static const success = Color(0xFF00E676);
+  static const warning = Color(0xFFFFB300);
+  static const purple = Color(0xFF8E5CFF);
+  static const danger = Color(0xFFFF3D3D);
+  static const textDim = Color(0xFF7C93B3);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// TV RESPONSIVE SCALING HELPER
-// ─────────────────────────────────────────────────────────────────────────────
-// Used exclusively by LiveScoreScreen and the widgets it privately owns, so
-// that other screens (e.g. _MatchSummaryScreen, LoginScreen) are completely
-// unaffected. Shared widgets (e.g. _CardShell, _TeamBadge) accept an optional
-// `scale` parameter that defaults to 1.0, preserving their existing behavior
-// everywhere they are used without an explicit scale.
-// ═══════════════════════════════════════════════════════════════════════════════
 double _tvScale(BuildContext context) {
   final double width = MediaQuery.of(context).size.width;
   final bool isTv = width >= 1600;
-  return isTv ? width / 1920 : 1.0;
+  if (!isTv) return 1.0;
+  const double designWidth = 2600.0;
+  return (width / designWidth).clamp(0.55, 0.85);
 }
-
+EdgeInsets _tvSafePadding(BuildContext context) {
+  final size = MediaQuery.of(context).size;
+  final bool isTv = size.width >= 1600;
+  if (!isTv) return EdgeInsets.zero;
+  return EdgeInsets.symmetric(
+    horizontal: size.width * 0.05,   // 5% left/right
+    vertical: size.height * 0.05,    // 5% top/bottom
+  );
+}
 // ═══════════════════════════════════════════════════════════════════════════════
 // LIVE SCORE SCREEN
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -86,6 +88,7 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
   DateTime _lastMatchUpdate = DateTime.now();
   Map<String, dynamic>? _lastMatchData;
   bool _showInningsBreak = false;
+  bool _summaryViewed = false;
   int _firstInningsRuns = 0;
   int _firstInningsWickets = 0;
 
@@ -115,17 +118,20 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
         .collection('tv_sessions')
         .doc(widget.sessionId)
         .snapshots()
-        .listen((snap) {
-      if (!snap.exists) return;
-      final data = snap.data()!;
-      if (data['loggedOut'] == true && mounted && !_hasNavigatedAway) {
-        _hasNavigatedAway = true;
-        _logoutSub?.cancel();
-        _showForcedLogoutModal();
-      }
-    }, onError: (e) {
-      debugPrint('❌ LiveScoreScreen: logout listener error: $e');
-    });
+        .listen(
+          (snap) {
+        if (!snap.exists) return;
+        final data = snap.data()!;
+        if (data['loggedOut'] == true && mounted && !_hasNavigatedAway) {
+          _hasNavigatedAway = true;
+          _logoutSub?.cancel();
+          _showForcedLogoutModal();
+        }
+      },
+      onError: (e) {
+        debugPrint('❌ LiveScoreScreen: logout listener error: $e');
+      },
+    );
   }
 
   void _showForcedLogoutModal() {
@@ -148,24 +154,27 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
     _matchSub?.cancel();
     _matchSub = _repo
         .watchMatch(widget.tournamentId, widget.matchId)
-        .listen((snap) {
-      _lastMatchUpdate = DateTime.now();
-      _reconnectAttempt = 0;
-      if (!snap.exists || !mounted) return;
-      final matchData = snap.data() as Map<String, dynamic>? ?? {};
-      final isCompleted = matchData['isCompleted'] == true;
-      debugPrint('📡 match snapshot received — isCompleted=$isCompleted');
-      _lastMatchData = matchData;
-      if (isCompleted && !_hasNavigatedAway) {
-        _hasNavigatedAway = true;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) _showMatchEndedAndPop(context, matchData);
-        });
-      }
-    }, onError: (e) {
-      debugPrint('❌ match stream error: $e');
-      _scheduleReconnect();
-    });
+        .listen(
+          (snap) {
+        _lastMatchUpdate = DateTime.now();
+        _reconnectAttempt = 0;
+        if (!snap.exists || !mounted) return;
+        final matchData = snap.data() as Map<String, dynamic>? ?? {};
+        final isCompleted = matchData['isCompleted'] == true;
+        debugPrint('📡 match snapshot received — isCompleted=$isCompleted');
+        _lastMatchData = matchData;
+        if (isCompleted && !_hasNavigatedAway) {
+          _hasNavigatedAway = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _showMatchEndedAndPop(context, matchData);
+          });
+        }
+      },
+      onError: (e) {
+        debugPrint('❌ match stream error: $e');
+        _scheduleReconnect();
+      },
+    );
   }
 
   // ── FIXED: single-innings completion check moved ABOVE the innings-break
@@ -185,17 +194,19 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
       return data['isSecondInnings'] == true;
     }).toList();
 
-    final firstInningsComplete = firstInningsDocs.isNotEmpty &&
-        (firstInningsDocs.first.data()
-        as Map<String, dynamic>)['isCompleted'] ==
-            true;
+    final firstInningsComplete =
+        firstInningsDocs.isNotEmpty &&
+            (firstInningsDocs.first.data()
+            as Map<String, dynamic>)['isCompleted'] ==
+                true;
 
     final hasSecondInnings = secondInningsDocs.isNotEmpty;
 
-    final secondInningsComplete = hasSecondInnings &&
-        (secondInningsDocs.first.data()
-        as Map<String, dynamic>)['isCompleted'] ==
-            true;
+    final secondInningsComplete =
+        hasSecondInnings &&
+            (secondInningsDocs.first.data()
+            as Map<String, dynamic>)['isCompleted'] ==
+                true;
 
     if (firstInningsComplete && secondInningsComplete) {
       debugPrint('✅ both innings complete — match over, navigating');
@@ -223,12 +234,12 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
         return;
       }
 
-      final firstData =
-      firstInningsDocs.first.data() as Map<String, dynamic>;
+      final firstData = firstInningsDocs.first.data() as Map<String, dynamic>;
       final runs = (firstData['totalRuns'] as num?)?.toInt() ?? 0;
       final wickets = (firstData['totalWickets'] as num?)?.toInt() ?? 0;
       debugPrint(
-          '🏏 innings 1 complete — showing innings break. Score: $runs/$wickets');
+        '🏏 innings 1 complete — showing innings break. Score: $runs/$wickets',
+      );
       if (!_showInningsBreak) {
         setState(() {
           _showInningsBreak = true;
@@ -239,21 +250,20 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
       return;
     }
 
-    if (hasSecondInnings && _showInningsBreak) {
-      setState(() => _showInningsBreak = false);
+    if (hasSecondInnings && _showInningsBreak && _summaryViewed) {
+      setState(() {
+        _showInningsBreak = false;
+      });
     }
-    // (old unreachable duplicate single-innings check removed from here)
   }
 
   void _startHeartbeat() {
     _heartbeatTimer?.cancel();
     _heartbeatTimer = Timer.periodic(const Duration(seconds: 15), (_) {
       if (!mounted) return;
-      final staleSince =
-          DateTime.now().difference(_lastMatchUpdate).inSeconds;
+      final staleSince = DateTime.now().difference(_lastMatchUpdate).inSeconds;
       if (staleSince > 15) {
-        debugPrint(
-            '💔 match stream stale for ${staleSince}s — reconnecting');
+        debugPrint('💔 match stream stale for ${staleSince}s — reconnecting');
         _scheduleReconnect();
       }
     });
@@ -261,16 +271,16 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
 
   void _scheduleReconnect() {
     _reconnectTimer?.cancel();
-    final delay =
-    Duration(seconds: (2 * (++_reconnectAttempt)).clamp(2, 10));
+    final delay = Duration(seconds: (2 * (++_reconnectAttempt)).clamp(2, 10));
     _reconnectTimer = Timer(delay, () {
       if (!mounted) return;
-      debugPrint(
-          '🔄 reconnecting match stream (attempt $_reconnectAttempt)');
+      debugPrint('🔄 reconnecting match stream (attempt $_reconnectAttempt)');
       _initMatchSubscription();
       setState(() {
-        _inningsStream =
-            _repo.watchInnings(widget.tournamentId, widget.matchId);
+        _inningsStream = _repo.watchInnings(
+          widget.tournamentId,
+          widget.matchId,
+        );
       });
     });
   }
@@ -291,6 +301,7 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
   Widget build(BuildContext context) {
     // ── TV-responsive scale factor (Android TV @ 1920x1080) ─────────────────
     final double s = _tvScale(context);
+    final EdgeInsets safe = _tvSafePadding(context);
 
     return Scaffold(
       backgroundColor: _C.bg,
@@ -335,7 +346,12 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
           // ── Discreet back / live chrome strip ───────────────────────────
           SafeArea(
             child: Padding(
-              padding: EdgeInsets.fromLTRB(20 * s, 12 * s, 20 * s, 0),
+              padding: EdgeInsets.fromLTRB(
+                20 * s + safe.left,
+                12 * s + safe.top,
+                20 * s + safe.right,
+                0,
+              ),
               child: Row(
                 children: [
                   GestureDetector(
@@ -345,11 +361,15 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
                       decoration: BoxDecoration(
                         color: Colors.white.withOpacity(0.06),
                         borderRadius: BorderRadius.circular(8 * s),
-                        border:
-                        Border.all(color: Colors.white.withOpacity(0.1)),
+                        border: Border.all(
+                          color: Colors.white.withOpacity(0.1),
+                        ),
                       ),
-                      child: Icon(Icons.arrow_back_rounded,
-                          color: Colors.white.withOpacity(0.55), size: 18 * s),
+                      child: Icon(
+                        Icons.arrow_back_rounded,
+                        color: Colors.white.withOpacity(0.55),
+                        size: 18 * s,
+                      ),
                     ),
                   ),
                   SizedBox(width: 10 * s),
@@ -367,14 +387,19 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
                     animation: _pulseAnim,
                     builder: (_, __) => Container(
                       padding: EdgeInsets.symmetric(
-                          horizontal: 10 * s, vertical: 5 * s),
+                        horizontal: 10 * s,
+                        vertical: 5 * s,
+                      ),
                       decoration: BoxDecoration(
-                        color:
-                        _C.live.withOpacity(0.12 + 0.06 * _pulseAnim.value),
+                        color: _C.live.withOpacity(
+                          0.12 + 0.06 * _pulseAnim.value,
+                        ),
                         borderRadius: BorderRadius.circular(7 * s),
                         border: Border.all(
-                            color: _C.live
-                                .withOpacity(0.4 + 0.2 * _pulseAnim.value)),
+                          color: _C.live.withOpacity(
+                            0.4 + 0.2 * _pulseAnim.value,
+                          ),
+                        ),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
@@ -383,15 +408,20 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
                             width: 6 * s,
                             height: 6 * s,
                             decoration: const BoxDecoration(
-                                shape: BoxShape.circle, color: _C.live),
+                              shape: BoxShape.circle,
+                              color: _C.live,
+                            ),
                           ),
                           SizedBox(width: 6 * s),
-                          Text('LIVE',
-                              style: TextStyle(
-                                  color: _C.live,
-                                  fontSize: 10 * s,
-                                  fontWeight: FontWeight.w900,
-                                  letterSpacing: 1.5 * s)),
+                          Text(
+                            'LIVE',
+                            style: TextStyle(
+                              color: _C.live,
+                              fontSize: 10 * s,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 1.5 * s,
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -407,8 +437,12 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
               child: ConstrainedBox(
                 constraints: BoxConstraints(maxWidth: 960 * s),
                 child: SingleChildScrollView(
-                  padding: EdgeInsets.symmetric(
-                      horizontal: 24 * s, vertical: 24 * s),
+                  padding: EdgeInsets.fromLTRB(
+                    24 * s + safe.left,
+                    24 * s + safe.top,
+                    24 * s + safe.right,
+                    24 * s + safe.bottom,
+                  ),
                   child: StreamBuilder<QuerySnapshot>(
                     stream: _inningsStream,
                     builder: (context, inningsSnap) {
@@ -418,24 +452,27 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
                         });
                         return _lastInningsId != null
                             ? _buildCachedBar(s)
-                            : _buildErrorBar(
-                            inningsSnap.error.toString(), s);
+                            : _buildErrorBar(inningsSnap.error.toString(), s);
                       }
 
                       if (inningsSnap.connectionState ==
                           ConnectionState.waiting) {
                         return _lastInningsId != null
                             ? _buildCachedBar(s)
-                            : _buildStatusBar(s,
-                            label: 'Connecting to live feed…');
+                            : _buildStatusBar(
+                          s,
+                          label: 'Connecting to live feed…',
+                        );
                       }
 
                       if (!inningsSnap.hasData ||
                           inningsSnap.data!.docs.isEmpty) {
                         return _lastInningsId != null
                             ? _buildCachedBar(s)
-                            : _buildStatusBar(s,
-                            label: 'Waiting for match to start…');
+                            : _buildStatusBar(
+                          s,
+                          label: 'Waiting for match to start…',
+                        );
                       }
 
                       _reconnectAttempt = 0;
@@ -476,6 +513,13 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
                           firstInningsRuns: _firstInningsRuns,
                           firstInningsWickets: _firstInningsWickets,
                           pulseAnim: _pulseAnim,
+
+                          onSummaryViewed: () {
+                            setState(() {
+                              _summaryViewed = true;
+                              _showInningsBreak = false;
+                            });
+                          },
                         );
                       }
 
@@ -488,8 +532,7 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
                           ? secondInningsDocs.first
                           : docs.first;
 
-                      final innData =
-                      currentDoc.data() as Map<String, dynamic>;
+                      final innData = currentDoc.data() as Map<String, dynamic>;
 
                       final firstInningsDocs = docs.where((d) {
                         final data = d.data() as Map<String, dynamic>;
@@ -498,7 +541,8 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
 
                       String? firstInningsBattingTeamName;
                       if (firstInningsDocs.isNotEmpty) {
-                        final firstData = firstInningsDocs.first.data()
+                        final firstData =
+                        firstInningsDocs.first.data()
                         as Map<String, dynamic>;
                         firstInningsBattingTeamName =
                             (firstData['battingTeamName'] ?? '')
@@ -507,18 +551,17 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
                       }
 
                       _lastInningsId = currentDoc.id;
-                      _lastInningsData =
-                      Map<String, dynamic>.from(innData);
+                      _lastInningsData = Map<String, dynamic>.from(innData);
                       _lastFirstInningsBattingTeamName =
                           firstInningsBattingTeamName;
 
                       int? firstInningsTotal;
                       if (secondInningsDocs.isNotEmpty &&
                           firstInningsDocs.isNotEmpty) {
-                        final fd = firstInningsDocs.first.data()
+                        final fd =
+                        firstInningsDocs.first.data()
                         as Map<String, dynamic>;
-                        firstInningsTotal =
-                            (fd['totalRuns'] as num?)?.toInt();
+                        firstInningsTotal = (fd['totalRuns'] as num?)?.toInt();
                       }
 
                       return _BroadcastBottomPanel(
@@ -567,12 +610,13 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
   }
 
   void _showMatchEndedAndPop(
-      BuildContext context, Map<String, dynamic> matchData) {
+      BuildContext context,
+      Map<String, dynamic> matchData,
+      ) {
     if (!mounted || _dialogShown) return;
     _dialogShown = true;
 
-    final resultText =
-        matchData['result'] as String? ?? 'Match Completed';
+    final resultText = matchData['result'] as String? ?? 'Match Completed';
 
     showDialog(
       context: context,
@@ -625,14 +669,17 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
     } catch (_) {}
   }
 
-  Widget _buildStatusBar(double s,
-      {String label = 'Waiting for match to start…'}) {
+  Widget _buildStatusBar(
+      double s, {
+        String label = 'Waiting for match to start…',
+      }) {
     return Column(
       children: [
         _TeamsHeaderStatic(
-            team1Name: widget.team1Name,
-            team2Name: widget.team2Name,
-            scale: s),
+          team1Name: widget.team1Name,
+          team2Name: widget.team2Name,
+          scale: s,
+        ),
         SizedBox(height: 20 * s),
         _StatusCard(label: label, isError: false, scale: s),
       ],
@@ -643,14 +690,16 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
     return Column(
       children: [
         _TeamsHeaderStatic(
-            team1Name: widget.team1Name,
-            team2Name: widget.team2Name,
-            scale: s),
+          team1Name: widget.team1Name,
+          team2Name: widget.team2Name,
+          scale: s,
+        ),
         SizedBox(height: 20 * s),
         _StatusCard(
-            label: 'Live data error — reconnecting…',
-            isError: true,
-            scale: s),
+          label: 'Live data error — reconnecting…',
+          isError: true,
+          scale: s,
+        ),
       ],
     );
   }
@@ -677,8 +726,7 @@ class _MatchSummaryScreen extends StatefulWidget {
   });
 
   @override
-  State<_MatchSummaryScreen> createState() =>
-      _MatchSummaryScreenState();
+  State<_MatchSummaryScreen> createState() => _MatchSummaryScreenState();
 }
 
 class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
@@ -715,10 +763,8 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
             .doc(inn.id)
             .collection('bowlers')
             .get();
-        _batsmen[inn.id] =
-            bSnap.docs.map((d) => d.data()).toList();
-        _bowlers[inn.id] =
-            wSnap.docs.map((d) => d.data()).toList();
+        _batsmen[inn.id] = bSnap.docs.map((d) => d.data()).toList();
+        _bowlers[inn.id] = wSnap.docs.map((d) => d.data()).toList();
       }
       if (mounted) setState(() => _loading = false);
     } catch (_) {
@@ -778,7 +824,9 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
                   padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
                   child: _CardShell(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 20, vertical: 14),
+                      horizontal: 20,
+                      vertical: 14,
+                    ),
                     child: Row(
                       children: [
                         GestureDetector(
@@ -789,11 +837,14 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
                               color: Colors.white.withOpacity(0.06),
                               borderRadius: BorderRadius.circular(9),
                               border: Border.all(
-                                  color: Colors.white.withOpacity(0.1)),
+                                color: Colors.white.withOpacity(0.1),
+                              ),
                             ),
-                            child: Icon(Icons.arrow_back_rounded,
-                                color: Colors.white.withOpacity(0.75),
-                                size: 18),
+                            child: Icon(
+                              Icons.arrow_back_rounded,
+                              color: Colors.white.withOpacity(0.75),
+                              size: 18,
+                            ),
                           ),
                         ),
                         const SizedBox(width: 16),
@@ -802,11 +853,15 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
                           decoration: BoxDecoration(
                             color: _C.gold.withOpacity(0.12),
                             borderRadius: BorderRadius.circular(9),
-                            border:
-                            Border.all(color: _C.gold.withOpacity(0.25)),
+                            border: Border.all(
+                              color: _C.gold.withOpacity(0.25),
+                            ),
                           ),
-                          child: const Icon(Icons.emoji_events,
-                              color: _C.gold, size: 20),
+                          child: const Icon(
+                            Icons.emoji_events,
+                            color: _C.gold,
+                            size: 20,
+                          ),
                         ),
                         const SizedBox(width: 14),
                         Expanded(
@@ -817,17 +872,19 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
                               Text(
                                 '${widget.team1Name} vs ${widget.team2Name}',
                                 style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 17,
-                                    fontWeight: FontWeight.w800),
+                                  color: Colors.white,
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w800,
+                                ),
                               ),
                               const SizedBox(height: 2),
                               Text(
                                 widget.resultText,
                                 style: const TextStyle(
-                                    color: _C.orange,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600),
+                                  color: _C.orange,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
                             ],
                           ),
@@ -837,24 +894,33 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
                           onTap: () => Navigator.pop(context),
                           child: Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 16, vertical: 10),
+                              horizontal: 16,
+                              vertical: 10,
+                            ),
                             decoration: BoxDecoration(
                               color: _C.accent.withOpacity(0.08),
                               borderRadius: BorderRadius.circular(20),
                               border: Border.all(
-                                  color: _C.accent.withOpacity(0.4)),
+                                color: _C.accent.withOpacity(0.4),
+                              ),
                             ),
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                const Icon(Icons.arrow_back,
-                                    color: _C.accent, size: 14),
+                                const Icon(
+                                  Icons.arrow_back,
+                                  color: _C.accent,
+                                  size: 14,
+                                ),
                                 const SizedBox(width: 8),
-                                Text('Back to Tournament',
-                                    style: TextStyle(
-                                        color: _C.accent.withOpacity(0.9),
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w700)),
+                                Text(
+                                  'Back to Tournament',
+                                  style: TextStyle(
+                                    color: _C.accent.withOpacity(0.9),
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
                               ],
                             ),
                           ),
@@ -867,8 +933,8 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
                 Expanded(
                   child: _loading
                       ? const Center(
-                      child: CircularProgressIndicator(
-                          color: _C.accent))
+                    child: CircularProgressIndicator(color: _C.accent),
+                  )
                       : _buildSummary(),
                 ),
               ],
@@ -882,10 +948,10 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
   Widget _buildSummary() {
     if (_innData.isEmpty) {
       return Center(
-        child: Text('No match data available',
-            style: TextStyle(
-                color: Colors.white.withOpacity(0.38),
-                fontSize: 18)),
+        child: Text(
+          'No match data available',
+          style: TextStyle(color: Colors.white.withOpacity(0.38), fontSize: 18),
+        ),
       );
     }
 
@@ -905,23 +971,30 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
             final innId = entry.key;
             final inn = entry.value;
             final isSecond = inn['isSecondInnings'] == true;
-            final batTeam =
-            (inn['battingTeamName'] ?? '').toString();
+            final batTeam = (inn['battingTeamName'] ?? '').toString();
             final batsmen = _batsmen[innId] ?? [];
             final bowlers = _bowlers[innId] ?? [];
-            final totalRuns = batsmen.fold(
-                0,
-                    (s, b) =>
-                s + ((b['runs'] ?? 0) as num).toInt());
-            final totalWkts =
+            // ── Prefer official innings totals from Firestore (these
+            // already include extras — wides/no-balls/byes/leg-byes —
+            // which a sum of batsmen runs alone would miss). Fall back
+            // to summing batsmen/ballsFaced only if the innings document
+            // does not (yet) have these fields, so behavior is unchanged
+            // for any data that predates this field. ───────────────────
+            final totalRuns = (inn['totalRuns'] as num?)?.toInt() ??
+                batsmen.fold<int>(
+                  0,
+                      (s, b) => s + ((b['runs'] ?? 0) as num).toInt(),
+                );
+            final totalWkts = (inn['totalWickets'] as num?)?.toInt() ??
                 batsmen.where((b) => b['isOut'] == true).length;
-            final totalBalls = batsmen.fold(
-                0,
-                    (s, b) =>
-                s +
-                    ((b['ballsFaced'] ?? 0) as num).toInt());
-            final overs =
-                '${totalBalls ~/ 6}.${totalBalls % 6}';
+            final totalBalls = (inn['balls'] as num?)?.toInt() ??
+                batsmen.fold<int>(
+                  0,
+                      (s, b) => s + ((b['ballsFaced'] ?? 0) as num).toInt(),
+                );
+            final overs = inn['overs'] != null
+                ? '${inn['overs']}'
+                : '${totalBalls ~/ 6}.${totalBalls % 6}';
 
             // ── Glass card shell replaces the old plain Container ───────
             return Padding(
@@ -933,43 +1006,47 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
                   children: [
                     Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 24, vertical: 14),
+                        horizontal: 24,
+                        vertical: 14,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.white.withOpacity(0.03),
                         borderRadius: const BorderRadius.vertical(
-                            top: Radius.circular(20)),
+                          top: Radius.circular(20),
+                        ),
                       ),
                       child: Row(
                         children: [
                           Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 4),
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
                             decoration: BoxDecoration(
                               color: _C.purple.withOpacity(0.2),
-                              borderRadius:
-                              BorderRadius.circular(6),
+                              borderRadius: BorderRadius.circular(6),
                               border: Border.all(
-                                  color:
-                                  _C.purple.withOpacity(0.4)),
+                                color: _C.purple.withOpacity(0.4),
+                              ),
                             ),
                             child: Text(
                               'Innings ${isSecond ? 2 : 1}',
                               style: const TextStyle(
-                                  color: _C.purple,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w700),
+                                color: _C.purple,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
                           ),
                           const SizedBox(width: 16),
                           Expanded(
                             child: Text(
-                              batTeam.isNotEmpty
-                                  ? batTeam
-                                  : 'Batting Team',
+                              batTeam.isNotEmpty ? batTeam : 'Batting Team',
                               style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w700),
+                                color: Colors.white,
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
                           ),
                           Text(
@@ -986,16 +1063,13 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
                     Padding(
                       padding: const EdgeInsets.all(24),
                       child: Row(
-                        crossAxisAlignment:
-                        CrossAxisAlignment.start,
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Expanded(
                             child: Column(
-                              crossAxisAlignment:
-                              CrossAxisAlignment.start,
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                _summaryLabel(
-                                    'BATTING', _C.orange),
+                                _summaryLabel('BATTING', _C.orange),
                                 const SizedBox(height: 8),
                                 _summaryHeader([
                                   'Batter',
@@ -1003,17 +1077,13 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
                                   'B',
                                   '4s',
                                   '6s',
-                                  'SR'
+                                  'SR',
                                 ]),
-                                const Divider(
-                                    color: Colors.white12,
-                                    height: 8),
-                                ...(batsmen
-                                  ..sort((a, b) =>
-                                      ((b['runs'] ?? 0) as num)
-                                          .compareTo(
-                                          (a['runs'] ?? 0)
-                                          as num)))
+                                const Divider(color: Colors.white12, height: 8),
+                                ...(batsmen..sort(
+                                      (a, b) => ((b['runs'] ?? 0) as num)
+                                      .compareTo((a['runs'] ?? 0) as num),
+                                ))
                                     .map((b) => _batsmanRow(b)),
                               ],
                             ),
@@ -1021,28 +1091,24 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
                           const SizedBox(width: 32),
                           Expanded(
                             child: Column(
-                              crossAxisAlignment:
-                              CrossAxisAlignment.start,
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                _summaryLabel(
-                                    'BOWLING', _C.accent),
+                                _summaryLabel('BOWLING', _C.accent),
                                 const SizedBox(height: 8),
                                 _summaryHeader([
                                   'Bowler',
                                   'O',
                                   'R',
                                   'W',
-                                  'Eco'
+                                  'Eco',
                                 ]),
-                                const Divider(
-                                    color: Colors.white12,
-                                    height: 8),
-                                ...(bowlers
-                                  ..sort((a, b) => ((b['wickets'] ??
-                                      0) as num)
+                                const Divider(color: Colors.white12, height: 8),
+                                ...(bowlers..sort(
+                                      (a, b) => ((b['wickets'] ?? 0) as num)
                                       .compareTo(
-                                      (a['wickets'] ?? 0)
-                                      as num)))
+                                    (a['wickets'] ?? 0) as num,
+                                  ),
+                                ))
                                     .map((b) => _bowlerRow(b)),
                               ],
                             ),
@@ -1063,16 +1129,20 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
   Widget _summaryLabel(String text, Color color) => Row(
     children: [
       Container(
-          width: 3,
-          height: 16,
+        width: 3,
+        height: 16,
+        color: color,
+        margin: const EdgeInsets.only(right: 8),
+      ),
+      Text(
+        text,
+        style: TextStyle(
           color: color,
-          margin: const EdgeInsets.only(right: 8)),
-      Text(text,
-          style: TextStyle(
-              color: color,
-              fontSize: 12,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 1.2)),
+          fontSize: 12,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 1.2,
+        ),
+      ),
     ],
   );
 
@@ -1081,53 +1151,57 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
     child: Row(
       children: [
         Expanded(
-            child: Text(cols[0],
-                style: const TextStyle(
-                    color: Colors.white38,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700))),
-        ...cols.skip(1).map((c) => SizedBox(
-          width: 42,
-          child: Text(c,
+          child: Text(
+            cols[0],
+            style: const TextStyle(
+              color: Colors.white38,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        ...cols
+            .skip(1)
+            .map(
+              (c) => SizedBox(
+            width: 42,
+            child: Text(
+              c,
               textAlign: TextAlign.center,
               style: const TextStyle(
-                  color: Colors.white38,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700)),
-        )),
+                color: Colors.white38,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ),
       ],
     ),
   );
 
   Widget _batsmanRow(Map<String, dynamic> b) {
-    final name =
-    (b['playerName'] ?? b['name'] ?? '').toString();
+    final name = (b['playerName'] ?? b['name'] ?? '').toString();
     final runs = (b['runs'] ?? 0) as num;
     final balls = (b['ballsFaced'] ?? 0) as num;
     final fours = (b['fours'] ?? 0) as num;
     final sixes = (b['sixes'] ?? 0) as num;
-    final sr = balls > 0
-        ? ((runs / balls) * 100).toStringAsFixed(1)
-        : '0.0';
+    final sr = balls > 0 ? ((runs / balls) * 100).toStringAsFixed(1) : '0.0';
     final isOut = b['isOut'] == true;
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 8),
       decoration: const BoxDecoration(
-          border: Border(
-              bottom: BorderSide(
-                  color: Colors.white10, width: 0.5))),
+        border: Border(bottom: BorderSide(color: Colors.white10, width: 0.5)),
+      ),
       child: Row(
         children: [
           Expanded(
             child: Text(
-              name.length > 16
-                  ? '${name.substring(0, 16)}…'
-                  : name,
+              name.length > 16 ? '${name.substring(0, 16)}…' : name,
               style: TextStyle(
-                  color: isOut
-                      ? Colors.white54
-                      : Colors.white70,
-                  fontSize: 13),
+                color: isOut ? Colors.white54 : Colors.white70,
+                fontSize: 13,
+              ),
             ),
           ),
           _sc('$runs', bold: true, color: _C.orange),
@@ -1141,54 +1215,45 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
   }
 
   Widget _bowlerRow(Map<String, dynamic> b) {
-    final name =
-    (b['playerName'] ?? b['name'] ?? '').toString();
+    final name = (b['playerName'] ?? b['name'] ?? '').toString();
     final overs = b['overs'] ?? 0;
-    final runs =
-    (b['runsConceded'] ?? b['runs'] ?? 0) as num;
+    final runs = (b['runsConceded'] ?? b['runs'] ?? 0) as num;
     final wkts = (b['wickets'] ?? 0) as num;
     final eco = (b['economy'] ?? 0) as num;
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 8),
       decoration: const BoxDecoration(
-          border: Border(
-              bottom: BorderSide(
-                  color: Colors.white10, width: 0.5))),
+        border: Border(bottom: BorderSide(color: Colors.white10, width: 0.5)),
+      ),
       child: Row(
         children: [
           Expanded(
             child: Text(
-              name.length > 16
-                  ? '${name.substring(0, 16)}…'
-                  : name,
-              style: const TextStyle(
-                  color: Colors.white70, fontSize: 13),
+              name.length > 16 ? '${name.substring(0, 16)}…' : name,
+              style: const TextStyle(color: Colors.white70, fontSize: 13),
             ),
           ),
           _sc('$overs'),
           _sc('$runs'),
-          _sc('$wkts',
-              bold: true,
-              color: wkts >= 3 ? _C.orange : Colors.white),
+          _sc('$wkts', bold: true, color: wkts >= 3 ? _C.orange : Colors.white),
           _sc(eco.toStringAsFixed(1)),
         ],
       ),
     );
   }
 
-  Widget _sc(String t,
-      {bool bold = false, Color? color}) =>
-      SizedBox(
-        width: 42,
-        child: Text(t,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-                color: color ?? Colors.white60,
-                fontSize: 13,
-                fontWeight: bold
-                    ? FontWeight.w800
-                    : FontWeight.w500)),
-      );
+  Widget _sc(String t, {bool bold = false, Color? color}) => SizedBox(
+    width: 42,
+    child: Text(
+      t,
+      textAlign: TextAlign.center,
+      style: TextStyle(
+        color: color ?? Colors.white60,
+        fontSize: 13,
+        fontWeight: bold ? FontWeight.w800 : FontWeight.w500,
+      ),
+    ),
+  );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1316,7 +1381,9 @@ class _FirstInningsSummaryScreenState
                   padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
                   child: _CardShell(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 20, vertical: 14),
+                      horizontal: 20,
+                      vertical: 14,
+                    ),
                     child: Row(
                       children: [
                         GestureDetector(
@@ -1327,11 +1394,14 @@ class _FirstInningsSummaryScreenState
                               color: Colors.white.withOpacity(0.06),
                               borderRadius: BorderRadius.circular(9),
                               border: Border.all(
-                                  color: Colors.white.withOpacity(0.1)),
+                                color: Colors.white.withOpacity(0.1),
+                              ),
                             ),
-                            child: Icon(Icons.arrow_back_rounded,
-                                color: Colors.white.withOpacity(0.75),
-                                size: 18),
+                            child: Icon(
+                              Icons.arrow_back_rounded,
+                              color: Colors.white.withOpacity(0.75),
+                              size: 18,
+                            ),
                           ),
                         ),
                         const SizedBox(width: 16),
@@ -1341,10 +1411,14 @@ class _FirstInningsSummaryScreenState
                             color: _C.orange.withOpacity(0.12),
                             borderRadius: BorderRadius.circular(9),
                             border: Border.all(
-                                color: _C.orange.withOpacity(0.25)),
+                              color: _C.orange.withOpacity(0.25),
+                            ),
                           ),
-                          child: const Icon(Icons.sports_cricket,
-                              color: _C.orange, size: 20),
+                          child: const Icon(
+                            Icons.sports_cricket,
+                            color: _C.orange,
+                            size: 20,
+                          ),
                         ),
                         const SizedBox(width: 14),
                         Expanded(
@@ -1355,17 +1429,19 @@ class _FirstInningsSummaryScreenState
                               Text(
                                 '${widget.team1Name} vs ${widget.team2Name}',
                                 style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 17,
-                                    fontWeight: FontWeight.w800),
+                                  color: Colors.white,
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w800,
+                                ),
                               ),
                               const SizedBox(height: 2),
                               const Text(
                                 '1st Innings Scorecard',
                                 style: TextStyle(
-                                    color: _C.textDim,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600),
+                                  color: _C.textDim,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
                             ],
                           ),
@@ -1377,7 +1453,8 @@ class _FirstInningsSummaryScreenState
                 Expanded(
                   child: _loading
                       ? const Center(
-                      child: CircularProgressIndicator(color: _C.accent))
+                    child: CircularProgressIndicator(color: _C.accent),
+                  )
                       : SingleChildScrollView(
                     padding: const EdgeInsets.all(24),
                     child: ConstrainedBox(
@@ -1392,10 +1469,11 @@ class _FirstInningsSummaryScreenState
                                 Text(
                                   battingTeam.toUpperCase(),
                                   style: const TextStyle(
-                                      color: Colors.white70,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w800,
-                                      letterSpacing: 1.5),
+                                    color: Colors.white70,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: 1.5,
+                                  ),
                                 ),
                                 const SizedBox(height: 8),
                                 Row(
@@ -1425,19 +1503,26 @@ class _FirstInningsSummaryScreenState
                                 const SizedBox(height: 16),
                                 Container(
                                   padding: const EdgeInsets.symmetric(
-                                      horizontal: 18, vertical: 10),
+                                    horizontal: 18,
+                                    vertical: 10,
+                                  ),
                                   decoration: BoxDecoration(
                                     color: _C.gold.withOpacity(0.08),
-                                    borderRadius:
-                                    BorderRadius.circular(12),
+                                    borderRadius: BorderRadius.circular(
+                                      12,
+                                    ),
                                     border: Border.all(
-                                        color: _C.gold.withOpacity(0.25)),
+                                      color: _C.gold.withOpacity(0.25),
+                                    ),
                                   ),
                                   child: Row(
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
-                                      const Icon(Icons.flag_rounded,
-                                          color: _C.gold, size: 16),
+                                      const Icon(
+                                        Icons.flag_rounded,
+                                        color: _C.gold,
+                                        size: 16,
+                                      ),
                                       const SizedBox(width: 8),
                                       Text(
                                         'Target: $target runs to win',
@@ -1458,7 +1543,8 @@ class _FirstInningsSummaryScreenState
                           _CardShell(
                             padding: const EdgeInsets.all(24),
                             child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                              crossAxisAlignment:
+                              CrossAxisAlignment.start,
                               children: [
                                 Expanded(
                                   child: Column(
@@ -1467,28 +1553,43 @@ class _FirstInningsSummaryScreenState
                                     children: [
                                       _fiLabel('BATTING', _C.orange),
                                       const SizedBox(height: 8),
-                                      _fiHeader(
-                                          ['Batter', 'R', 'B', '4s', '6s', 'SR']),
+                                      _fiHeader([
+                                        'Batter',
+                                        'R',
+                                        'B',
+                                        '4s',
+                                        '6s',
+                                        'SR',
+                                      ]),
                                       const Divider(
-                                          color: Colors.white12, height: 8),
+                                        color: Colors.white12,
+                                        height: 8,
+                                      ),
                                       if (_batsmen.isEmpty)
                                         Padding(
-                                          padding: const EdgeInsets.symmetric(
-                                              vertical: 12),
+                                          padding:
+                                          const EdgeInsets.symmetric(
+                                            vertical: 12,
+                                          ),
                                           child: Text(
                                             'No batting data available',
                                             style: TextStyle(
-                                                color: Colors.white
-                                                    .withOpacity(0.35),
-                                                fontSize: 13),
+                                              color: Colors.white
+                                                  .withOpacity(0.35),
+                                              fontSize: 13,
+                                            ),
                                           ),
                                         )
                                       else
-                                        ...(_batsmen
-                                          ..sort((a, b) =>
-                                              ((b['runs'] ?? 0) as num)
+                                        ...(_batsmen..sort(
+                                              (a, b) =>
+                                              ((b['runs'] ?? 0)
+                                              as num)
                                                   .compareTo(
-                                                  (a['runs'] ?? 0) as num)))
+                                                (a['runs'] ?? 0)
+                                                as num,
+                                              ),
+                                        ))
                                             .map(_fiBatsmanRow),
                                     ],
                                   ),
@@ -1501,28 +1602,43 @@ class _FirstInningsSummaryScreenState
                                     children: [
                                       _fiLabel('BOWLING', _C.accent),
                                       const SizedBox(height: 8),
-                                      _fiHeader(
-                                          ['Bowler', 'O', 'R', 'W', 'Eco']),
+                                      _fiHeader([
+                                        'Bowler',
+                                        'O',
+                                        'R',
+                                        'W',
+                                        'Eco',
+                                      ]),
                                       const Divider(
-                                          color: Colors.white12, height: 8),
+                                        color: Colors.white12,
+                                        height: 8,
+                                      ),
                                       if (_bowlers.isEmpty)
                                         Padding(
-                                          padding: const EdgeInsets.symmetric(
-                                              vertical: 12),
+                                          padding:
+                                          const EdgeInsets.symmetric(
+                                            vertical: 12,
+                                          ),
                                           child: Text(
                                             'No bowling data available',
                                             style: TextStyle(
-                                                color: Colors.white
-                                                    .withOpacity(0.35),
-                                                fontSize: 13),
+                                              color: Colors.white
+                                                  .withOpacity(0.35),
+                                              fontSize: 13,
+                                            ),
                                           ),
                                         )
                                       else
-                                        ...(_bowlers
-                                          ..sort((a, b) =>
-                                              ((b['wickets'] ?? 0) as num)
+                                        ...(_bowlers..sort(
+                                              (a, b) =>
+                                              ((b['wickets'] ?? 0)
+                                              as num)
                                                   .compareTo(
-                                                  (a['wickets'] ?? 0) as num)))
+                                                (a['wickets'] ??
+                                                    0)
+                                                as num,
+                                              ),
+                                        ))
                                             .map(_fiBowlerRow),
                                     ],
                                   ),
@@ -1546,16 +1662,20 @@ class _FirstInningsSummaryScreenState
   Widget _fiLabel(String text, Color color) => Row(
     children: [
       Container(
-          width: 3,
-          height: 16,
+        width: 3,
+        height: 16,
+        color: color,
+        margin: const EdgeInsets.only(right: 8),
+      ),
+      Text(
+        text,
+        style: TextStyle(
           color: color,
-          margin: const EdgeInsets.only(right: 8)),
-      Text(text,
-          style: TextStyle(
-              color: color,
-              fontSize: 12,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 1.2)),
+          fontSize: 12,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 1.2,
+        ),
+      ),
     ],
   );
 
@@ -1564,20 +1684,31 @@ class _FirstInningsSummaryScreenState
     child: Row(
       children: [
         Expanded(
-            child: Text(cols[0],
-                style: const TextStyle(
-                    color: Colors.white38,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700))),
-        ...cols.skip(1).map((c) => SizedBox(
-          width: 42,
-          child: Text(c,
+          child: Text(
+            cols[0],
+            style: const TextStyle(
+              color: Colors.white38,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        ...cols
+            .skip(1)
+            .map(
+              (c) => SizedBox(
+            width: 42,
+            child: Text(
+              c,
               textAlign: TextAlign.center,
               style: const TextStyle(
-                  color: Colors.white38,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700)),
-        )),
+                color: Colors.white38,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ),
       ],
     ),
   );
@@ -1588,22 +1719,22 @@ class _FirstInningsSummaryScreenState
     final balls = (b['ballsFaced'] ?? 0) as num;
     final fours = (b['fours'] ?? 0) as num;
     final sixes = (b['sixes'] ?? 0) as num;
-    final sr =
-    balls > 0 ? ((runs / balls) * 100).toStringAsFixed(1) : '0.0';
+    final sr = balls > 0 ? ((runs / balls) * 100).toStringAsFixed(1) : '0.0';
     final isOut = b['isOut'] == true;
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 8),
       decoration: const BoxDecoration(
-          border:
-          Border(bottom: BorderSide(color: Colors.white10, width: 0.5))),
+        border: Border(bottom: BorderSide(color: Colors.white10, width: 0.5)),
+      ),
       child: Row(
         children: [
           Expanded(
             child: Text(
               name.length > 16 ? '${name.substring(0, 16)}…' : name,
               style: TextStyle(
-                  color: isOut ? Colors.white54 : Colors.white70,
-                  fontSize: 13),
+                color: isOut ? Colors.white54 : Colors.white70,
+                fontSize: 13,
+              ),
             ),
           ),
           _fiCell('$runs', bold: true, color: _C.orange),
@@ -1625,8 +1756,8 @@ class _FirstInningsSummaryScreenState
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 8),
       decoration: const BoxDecoration(
-          border:
-          Border(bottom: BorderSide(color: Colors.white10, width: 0.5))),
+        border: Border(bottom: BorderSide(color: Colors.white10, width: 0.5)),
+      ),
       child: Row(
         children: [
           Expanded(
@@ -1637,8 +1768,11 @@ class _FirstInningsSummaryScreenState
           ),
           _fiCell('$overs'),
           _fiCell('$runs'),
-          _fiCell('$wkts',
-              bold: true, color: wkts >= 3 ? _C.orange : Colors.white),
+          _fiCell(
+            '$wkts',
+            bold: true,
+            color: wkts >= 3 ? _C.orange : Colors.white,
+          ),
           _fiCell(eco.toStringAsFixed(1)),
         ],
       ),
@@ -1647,12 +1781,15 @@ class _FirstInningsSummaryScreenState
 
   Widget _fiCell(String t, {bool bold = false, Color? color}) => SizedBox(
     width: 42,
-    child: Text(t,
-        textAlign: TextAlign.center,
-        style: TextStyle(
-            color: color ?? Colors.white60,
-            fontSize: 13,
-            fontWeight: bold ? FontWeight.w800 : FontWeight.w500)),
+    child: Text(
+      t,
+      textAlign: TextAlign.center,
+      style: TextStyle(
+        color: color ?? Colors.white60,
+        fontSize: 13,
+        fontWeight: bold ? FontWeight.w800 : FontWeight.w500,
+      ),
+    ),
   );
 }
 
@@ -1677,7 +1814,10 @@ class _CardShell extends StatelessWidget {
     return ClipRRect(
       borderRadius: BorderRadius.circular(20 * s),
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 24 * s, sigmaY: 24 * s), // stronger blur (was 16)
+        filter: ImageFilter.blur(
+          sigmaX: 24 * s,
+          sigmaY: 24 * s,
+        ), // stronger blur (was 16)
         child: Container(
           padding: padding,
           decoration: BoxDecoration(
@@ -1685,8 +1825,8 @@ class _CardShell extends StatelessWidget {
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
               colors: [
-                Colors.white.withOpacity(0.06),  // glassy top-left highlight
-                _C.card.withOpacity(0.50),       // lower fill opacity (was 0.72)
+                Colors.white.withOpacity(0.06), // glassy top-left highlight
+                _C.card.withOpacity(0.50), // lower fill opacity (was 0.72)
               ],
             ),
             borderRadius: BorderRadius.circular(20 * s),
@@ -1727,19 +1867,20 @@ class _TeamBadge extends StatelessWidget {
           height: 32 * s,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(9 * s),
-            gradient: const LinearGradient(
-              colors: [_C.accent, _C.accentDim],
-            ),
+            gradient: const LinearGradient(colors: [_C.accent, _C.accentDim]),
             boxShadow: [
               BoxShadow(color: _C.accent.withOpacity(0.3), blurRadius: 10 * s),
             ],
           ),
           child: Center(
-            child: Text(initial,
-                style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 14 * s,
-                    fontWeight: FontWeight.w900)),
+            child: Text(
+              initial,
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 14 * s,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
           ),
         ),
         SizedBox(width: 12 * s),
@@ -1760,8 +1901,11 @@ class _TeamBadge extends StatelessWidget {
 class _TeamsHeaderStatic extends StatelessWidget {
   final String team1Name, team2Name;
   final double scale;
-  const _TeamsHeaderStatic(
-      {required this.team1Name, required this.team2Name, this.scale = 1.0});
+  const _TeamsHeaderStatic({
+    required this.team1Name,
+    required this.team2Name,
+    this.scale = 1.0,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1773,12 +1917,15 @@ class _TeamsHeaderStatic extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           _TeamBadge(name: team1Name, scale: s),
-          Text('VS',
-              style: TextStyle(
-                  color: Colors.white.withOpacity(0.3),
-                  fontSize: 13 * s,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 2 * s)),
+          Text(
+            'VS',
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.3),
+              fontSize: 13 * s,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 2 * s,
+            ),
+          ),
           _TeamBadge(name: team2Name, scale: s),
         ],
       ),
@@ -1790,8 +1937,11 @@ class _StatusCard extends StatelessWidget {
   final String label;
   final bool isError;
   final double scale;
-  const _StatusCard(
-      {required this.label, required this.isError, this.scale = 1.0});
+  const _StatusCard({
+    required this.label,
+    required this.isError,
+    this.scale = 1.0,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1804,13 +1954,19 @@ class _StatusCard extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           if (isError)
-            Icon(Icons.error_outline_rounded,
-                color: color.withOpacity(0.8), size: 18 * s)
+            Icon(
+              Icons.error_outline_rounded,
+              color: color.withOpacity(0.8),
+              size: 18 * s,
+            )
           else
             SizedBox(
               width: 16 * s,
               height: 16 * s,
-              child: CircularProgressIndicator(strokeWidth: 2 * s, color: color),
+              child: CircularProgressIndicator(
+                strokeWidth: 2 * s,
+                color: color,
+              ),
             ),
           SizedBox(width: 14 * s),
           Text(
@@ -1864,8 +2020,7 @@ class _BroadcastBottomPanel extends StatefulWidget {
   });
 
   @override
-  State<_BroadcastBottomPanel> createState() =>
-      _BroadcastBottomPanelState();
+  State<_BroadcastBottomPanel> createState() => _BroadcastBottomPanelState();
 }
 
 class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
@@ -1875,9 +2030,15 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
 
   late String _trackedInningsId = widget.inningsId;
   late Stream<QuerySnapshot> _batsmenStream = widget.repo.watchBatsmen(
-      widget.tournamentId, widget.matchId, widget.inningsId);
+    widget.tournamentId,
+    widget.matchId,
+    widget.inningsId,
+  );
   late Stream<QuerySnapshot> _bowlersStream = widget.repo.watchBowlers(
-      widget.tournamentId, widget.matchId, widget.inningsId);
+    widget.tournamentId,
+    widget.matchId,
+    widget.inningsId,
+  );
 
   @override
   void didUpdateWidget(covariant _BroadcastBottomPanel oldWidget) {
@@ -1888,24 +2049,31 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
         _cachedBatsmen = [];
         _cachedBowler = null;
         _batsmenStream = widget.repo.watchBatsmen(
-            widget.tournamentId, widget.matchId, widget.inningsId);
+          widget.tournamentId,
+          widget.matchId,
+          widget.inningsId,
+        );
         _bowlersStream = widget.repo.watchBowlers(
-            widget.tournamentId, widget.matchId, widget.inningsId);
+          widget.tournamentId,
+          widget.matchId,
+          widget.inningsId,
+        );
       });
     }
   }
 
   String _resolveBattingTeamName() {
-    final battingTeamId =
-    (widget.innData['battingTeamId'] ?? '').toString().trim();
+    final battingTeamId = (widget.innData['battingTeamId'] ?? '')
+        .toString()
+        .trim();
     debugPrint(
-        'battingTeamId=$battingTeamId  team1Id=${widget.team1Id}  team2Id=${widget.team2Id}');
+      'battingTeamId=$battingTeamId  team1Id=${widget.team1Id}  team2Id=${widget.team2Id}',
+    );
     if (battingTeamId.isNotEmpty) {
       if (battingTeamId == widget.team1Id) return widget.team1Name;
       if (battingTeamId == widget.team2Id) return widget.team2Name;
     }
-    final name =
-    (widget.innData['battingTeamName'] ?? '').toString().trim();
+    final name = (widget.innData['battingTeamName'] ?? '').toString().trim();
     if (name.isNotEmpty) return name;
     final isSecondInnings = widget.innData['isSecondInnings'] == true;
     if (isSecondInnings &&
@@ -1939,53 +2107,86 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
         }
         final allBatsmen = _cachedBatsmen;
 
-        // ── Score calculations (UNCHANGED) ──────────────────────────
-        int totalRuns = 0;
-        int totalWickets = 0;
-        int totalBalls = 0;
-        for (final b in allBatsmen) {
-          totalRuns += (b['runs'] ?? 0) as int;
-          totalBalls += (b['ballsFaced'] ?? 0) as int;
-          if (b['isOut'] == true) totalWickets++;
-        }
+        // ── Score calculations ──────────────────────────────────────
+        // Per the CRICTRAX Firestore schema, the innings document
+        // already stores the official totalRuns / totalWickets / balls
+        // (these correctly include extras — wides, no-balls, byes, and
+        // leg-byes — which a sum of batsmen data alone cannot capture).
+        // We read those fields first and only fall back to summing the
+        // batsmen/ballsFaced subcollection data when the innings
+        // document doesn't have them yet, so nothing breaks for older
+        // or partially-written documents. ─────────────────────────────
+        final calculatedRuns = allBatsmen.fold<int>(
+          0,
+              (s, b) => s + ((b['runs'] ?? 0) as num).toInt(),
+        );
+        final calculatedWickets =
+            allBatsmen.where((b) => b['isOut'] == true).length;
+        final calculatedBallsFromBatsmen = allBatsmen.fold<int>(
+          0,
+              (s, b) => s + ((b['ballsFaced'] ?? 0) as num).toInt(),
+        );
 
-        if (totalRuns == 0 && widget.innData['totalRuns'] != null) {
-          totalRuns =
-              (widget.innData['totalRuns'] as num).toInt();
-        }
-        if (totalWickets == 0 &&
-            widget.innData['totalWickets'] != null) {
-          totalWickets =
-              (widget.innData['totalWickets'] as num).toInt();
-        }
+        final totalRuns =
+            (widget.innData['totalRuns'] as num?)?.toInt() ?? calculatedRuns;
+        final totalWickets =
+            (widget.innData['totalWickets'] as num?)?.toInt() ??
+                calculatedWickets;
+
+        // `balls` on the innings document is the authoritative ball
+        // count (kept correct across wides/no-balls/byes/leg-byes by
+        // the scoring logic that writes it). Fall back to the summed
+        // ballsFaced from batsmen only if it's missing.
+        final totalBalls =
+            (widget.innData['balls'] as num?)?.toInt() ??
+                calculatedBallsFromBatsmen;
 
         final completedOvers = totalBalls ~/ 6;
         final ballsInOver = totalBalls % 6;
-        final currentOverNumber =
-        (ballsInOver == 0 && totalBalls > 0)
+        final currentOverNumber = (ballsInOver == 0 && totalBalls > 0)
             ? completedOvers - 1
             : completedOvers;
-        final oversDisplay =
-        widget.innData['totalOvers'] != null && totalBalls == 0
+        // Prefer the official `overs` string stored on the innings
+        // document (e.g. "12.3") — it is written by the scoring engine
+        // and correctly reflects overs bowled including how extras
+        // affect the ball count. Fall back to the locally computed
+        // completedOvers.ballsInOver, then to the legacy totalOvers
+        // placeholder used before a ball has been bowled.
+        final oversDisplay = widget.innData['overs'] != null
+            ? '${widget.innData['overs']}'
+            : (widget.innData['totalOvers'] != null && totalBalls == 0
             ? widget.innData['totalOvers']
-            : '$completedOvers.$ballsInOver';
+            : '$completedOvers.$ballsInOver');
 
-        final activeBatsmen =
-        allBatsmen.where((b) => b['isOut'] != true).toList();
+        final activeBatsmen = allBatsmen
+            .where((b) => b['isOut'] != true)
+            .toList();
 
-        // Target / required run calc (2nd innings)
-        final target = widget.firstInningsTotal != null
-            ? widget.firstInningsTotal! + 1
-            : null;
+        // Target / required run calc (2nd innings). The innings
+        // document stores targetRuns / runsNeeded / ballsRemaining
+        // directly once a chase is in progress — use those first and
+        // only derive them locally (as before) when they aren't present
+        // yet, e.g. right at the start of the 2nd innings.
+        final target = (widget.innData['targetRuns'] as num?)?.toInt() ??
+            (widget.firstInningsTotal != null
+                ? widget.firstInningsTotal! + 1
+                : null);
         final runsNeeded =
-        target != null ? (target - totalRuns).clamp(0, 9999) : null;
+            (widget.innData['runsNeeded'] as num?)?.toInt() ??
+                (target != null
+                    ? (target - totalRuns).clamp(0, 9999)
+                    : null);
         final maxOvers = (widget.innData['maxOvers'] as num?)?.toInt();
-        final ballsRemaining = maxOvers != null
-            ? ((maxOvers * 6) - totalBalls).clamp(0, 9999)
-            : null;
+        final ballsRemaining =
+            (widget.innData['ballsRemaining'] as num?)?.toInt() ??
+                (maxOvers != null
+                    ? ((maxOvers * 6) - totalBalls).clamp(0, 9999)
+                    : null);
         final oversRemaining = ballsRemaining != null
             ? '${ballsRemaining ~/ 6}.${ballsRemaining % 6}'
             : null;
+
+        final activeBatsmenForPanel = activeBatsmen;
 
         return StreamBuilder<QuerySnapshot>(
           stream: _bowlersStream,
@@ -2025,7 +2226,6 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
                   return 0;
                 });
                 _cachedBowler = midOverBowlers.first;
-
               } else {
                 // PRIORITY 2: isBowling flag
                 final flaggedBowlers = bowlers
@@ -2042,16 +2242,17 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
                     return 0;
                   });
                   _cachedBowler = flaggedBowlers.first;
-
                 } else {
                   // PRIORITY 3: most recently updated bowler
                   final withTimestamp = bowlers
                       .where((b) => b['lastUpdated'] is Timestamp)
                       .toList();
                   if (withTimestamp.isNotEmpty) {
-                    withTimestamp.sort((a, b) =>
-                        (b['lastUpdated'] as Timestamp)
-                            .compareTo(a['lastUpdated'] as Timestamp));
+                    withTimestamp.sort(
+                          (a, b) => (b['lastUpdated'] as Timestamp).compareTo(
+                        a['lastUpdated'] as Timestamp,
+                      ),
+                    );
                     _cachedBowler = withTimestamp.first;
                   } else {
                     // PRIORITY 4: last document as final fallback
@@ -2061,13 +2262,22 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
               }
             }
             final bowler = _cachedBowler;
+            // NOTE: `currentRunRate` is NOT part of the documented
+            // Innings Document schema (only the per-ball `scores`
+            // subcollection document has it), so per Task 3 this
+            // calculation is left exactly as it was — it is not backed
+            // by a verified innings-level Firestore field.
             final crr = totalBalls > 0
                 ? (totalRuns / totalBalls) * 6
                 : (widget.innData['currentRunRate'] ?? 0.0);
 
-            // Required Run Rate
+            // Required Run Rate — the innings document does store
+            // `requiredRunRate` directly, so prefer it and only fall
+            // back to the local derivation when it isn't present.
             double? rrr;
-            if (runsNeeded != null &&
+            if (widget.innData['requiredRunRate'] != null) {
+              rrr = (widget.innData['requiredRunRate'] as num).toDouble();
+            } else if (runsNeeded != null &&
                 ballsRemaining != null &&
                 ballsRemaining > 0) {
               rrr = (runsNeeded / ballsRemaining) * 6;
@@ -2081,7 +2291,7 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
               totalWickets: totalWickets,
               totalBalls: totalBalls,
               oversDisplay: oversDisplay,
-              activeBatsmen: activeBatsmen,
+              activeBatsmen: activeBatsmenForPanel,
               bowler: bowler,
               crr: crr,
               rrr: rrr,
@@ -2134,12 +2344,15 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   _TeamBadge(name: widget.team1Name, scale: s),
-                  Text('VS',
-                      style: TextStyle(
-                          color: Colors.white.withOpacity(0.3),
-                          fontSize: 13 * s,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 2 * s)),
+                  Text(
+                    'VS',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.3),
+                      fontSize: 13 * s,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 2 * s,
+                    ),
+                  ),
                   _TeamBadge(name: widget.team2Name, scale: s),
                 ],
               ),
@@ -2174,8 +2387,10 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
               ),
               SizedBox(height: 14 * s),
               Container(
-                padding:
-                EdgeInsets.symmetric(horizontal: 20 * s, vertical: 9 * s),
+                padding: EdgeInsets.symmetric(
+                  horizontal: 20 * s,
+                  vertical: 9 * s,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.white.withOpacity(0.04),
                   borderRadius: BorderRadius.circular(30 * s),
@@ -2184,18 +2399,24 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text('$oversDisplay',
-                        style: TextStyle(
-                            color: _C.accent,
-                            fontSize: 15 * s,
-                            fontWeight: FontWeight.w800)),
+                    Text(
+                      '$oversDisplay',
+                      style: TextStyle(
+                        color: _C.accent,
+                        fontSize: 15 * s,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
                     SizedBox(width: 6 * s),
-                    Text('OVERS',
-                        style: TextStyle(
-                            color: Colors.white.withOpacity(0.35),
-                            fontSize: 11 * s,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 1 * s)),
+                    Text(
+                      'OVERS',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.35),
+                        fontSize: 11 * s,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1 * s,
+                      ),
+                    ),
                     SizedBox(width: 12 * s),
                     Container(
                       width: 4 * s,
@@ -2206,18 +2427,24 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
                       ),
                     ),
                     SizedBox(width: 12 * s),
-                    Text('CRR:',
-                        style: TextStyle(
-                            color: Colors.white.withOpacity(0.35),
-                            fontSize: 11 * s,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 1 * s)),
+                    Text(
+                      'CRR:',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.35),
+                        fontSize: 11 * s,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1 * s,
+                      ),
+                    ),
                     SizedBox(width: 6 * s),
-                    Text(crrStr,
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 15 * s,
-                            fontWeight: FontWeight.w800)),
+                    Text(
+                      crrStr,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 15 * s,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -2243,13 +2470,15 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
-                child: _BatsmenCard(
-                    battingTeamName: battingTeamName,
-                    batters: activeBatsmen)),
+              child: _BatsmenCard(
+                battingTeamName: battingTeamName,
+                batters: activeBatsmen,
+              ),
+            ),
             SizedBox(width: 18 * s),
             Expanded(
-                child: _BowlerCard(
-                    bowlingTeamName: opponentName, bowler: bowler)),
+              child: _BowlerCard(bowlingTeamName: opponentName, bowler: bowler),
+            ),
           ],
         ),
 
@@ -2288,22 +2517,29 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
               );
             },
             child: Container(
-              padding:
-              EdgeInsets.symmetric(horizontal: 26 * s, vertical: 14 * s),
+              padding: EdgeInsets.symmetric(
+                horizontal: 26 * s,
+                vertical: 14 * s,
+              ),
               decoration: BoxDecoration(
                 color: _C.accent.withOpacity(0.06),
                 borderRadius: BorderRadius.circular(30 * s),
                 border: Border.all(color: _C.accent.withOpacity(0.55)),
                 boxShadow: [
                   BoxShadow(
-                      color: _C.accent.withOpacity(0.18), blurRadius: 18 * s),
+                    color: _C.accent.withOpacity(0.18),
+                    blurRadius: 18 * s,
+                  ),
                 ],
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.assignment_outlined,
-                      color: _C.accent, size: 16 * s),
+                  Icon(
+                    Icons.assignment_outlined,
+                    color: _C.accent,
+                    size: 16 * s,
+                  ),
                   SizedBox(width: 10 * s),
                   Text(
                     'FULL SCORECARD',
@@ -2376,20 +2612,28 @@ class _TargetInfoBar extends StatelessWidget {
               children: [
                 Icon(Icons.flag_rounded, color: urgentColor, size: 13 * s),
                 SizedBox(width: 6 * s),
-                Text('TARGET $target',
-                    style: TextStyle(
-                        color: urgentColor,
-                        fontSize: 12 * s,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 1 * s)),
+                Text(
+                  'TARGET $target',
+                  style: TextStyle(
+                    color: urgentColor,
+                    fontSize: 12 * s,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1 * s,
+                  ),
+                ),
               ],
             ),
-            _TargetStat(label: 'NEED', value: '$runsNeeded runs', color: _C.orange),
+            _TargetStat(
+              label: 'NEED',
+              value: '$runsNeeded runs',
+              color: _C.orange,
+            ),
             if (ballsRemaining != null)
               _TargetStat(
-                  label: 'FROM',
-                  value: '$ballsRemaining balls',
-                  color: Colors.white.withOpacity(0.6)),
+                label: 'FROM',
+                value: '$ballsRemaining balls',
+                color: Colors.white.withOpacity(0.6),
+              ),
             if (rrr != null)
               _TargetStat(label: 'RRR', value: rrr!, color: _C.warning),
           ],
@@ -2402,8 +2646,11 @@ class _TargetInfoBar extends StatelessWidget {
 class _TargetStat extends StatelessWidget {
   final String label, value;
   final Color color;
-  const _TargetStat(
-      {required this.label, required this.value, required this.color});
+  const _TargetStat({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -2413,15 +2660,23 @@ class _TargetStat extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.baseline,
       textBaseline: TextBaseline.alphabetic,
       children: [
-        Text('$label  ',
-            style: TextStyle(
-                color: Colors.white.withOpacity(0.3),
-                fontSize: 9 * s,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 1 * s)),
-        Text(value,
-            style: TextStyle(
-                color: color, fontSize: 13 * s, fontWeight: FontWeight.w800)),
+        Text(
+          '$label  ',
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.3),
+            fontSize: 9 * s,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 1 * s,
+          ),
+        ),
+        Text(
+          value,
+          style: TextStyle(
+            color: color,
+            fontSize: 13 * s,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
       ],
     );
   }
@@ -2434,17 +2689,17 @@ class _TargetStat extends StatelessWidget {
 class _BatsmenCard extends StatelessWidget {
   final String battingTeamName;
   final List<Map<String, dynamic>> batters;
-  const _BatsmenCard(
-      {required this.battingTeamName, required this.batters});
+  const _BatsmenCard({required this.battingTeamName, required this.batters});
 
   @override
   Widget build(BuildContext context) {
     final double s = _tvScale(context);
-    final sorted = [...batters]..sort((a, b) {
-      final aS = (a['isOnStrike'] == true || a['onStrike'] == true) ? 0 : 1;
-      final bS = (b['isOnStrike'] == true || b['onStrike'] == true) ? 0 : 1;
-      return aS.compareTo(bS);
-    });
+    final sorted = [...batters]
+      ..sort((a, b) {
+        final aS = (a['isOnStrike'] == true || a['onStrike'] == true) ? 0 : 1;
+        final bS = (b['isOnStrike'] == true || b['onStrike'] == true) ? 0 : 1;
+        return aS.compareTo(bS);
+      });
     final display = sorted.take(2).toList();
 
     return _CardShell(
@@ -2455,44 +2710,58 @@ class _BatsmenCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Text('BATSMAN',
-                  style: TextStyle(
-                      color: _C.textDim,
-                      fontSize: 11 * s,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 1.5 * s)),
+              Text(
+                'BATSMAN',
+                style: TextStyle(
+                  color: _C.textDim,
+                  fontSize: 11 * s,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1.5 * s,
+                ),
+              ),
               const Spacer(),
               SizedBox(
-                  width: 40 * s,
-                  child: Text('R',
-                      textAlign: TextAlign.right,
-                      style: TextStyle(
-                          color: _C.textDim,
-                          fontSize: 11 * s,
-                          fontWeight: FontWeight.w800))),
+                width: 40 * s,
+                child: Text(
+                  'R',
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    color: _C.textDim,
+                    fontSize: 11 * s,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
               SizedBox(width: 12 * s),
               SizedBox(
-                  width: 30 * s,
-                  child: Text('B',
-                      textAlign: TextAlign.right,
-                      style: TextStyle(
-                          color: _C.textDim,
-                          fontSize: 11 * s,
-                          fontWeight: FontWeight.w800))),
+                width: 30 * s,
+                child: Text(
+                  'B',
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    color: _C.textDim,
+                    fontSize: 11 * s,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
             ],
           ),
           SizedBox(height: 14 * s),
           if (display.isEmpty)
-            Text('Yet to bat',
-                style: TextStyle(
-                    color: Colors.white.withOpacity(0.3), fontSize: 13 * s))
+            Text(
+              'Yet to bat',
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.3),
+                fontSize: 13 * s,
+              ),
+            )
           else
             ...display.map((b) {
               final name = (b['playerName'] ?? b['name'] ?? '').toString();
               final runs = b['runs'] ?? 0;
               final balls = b['ballsFaced'] ?? 0;
-              final onStrike =
-                  b['isOnStrike'] == true || b['onStrike'] == true;
+              final onStrike = b['isOnStrike'] == true || b['onStrike'] == true;
               final displayName = name.isEmpty
                   ? 'Unknown'
                   : (name.length > 18 ? '${name.substring(0, 18)}…' : name);
@@ -2509,18 +2778,23 @@ class _BatsmenCard extends StatelessWidget {
                               displayName,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                color: Colors.white
-                                    .withOpacity(onStrike ? 1 : 0.55),
+                                color: Colors.white.withOpacity(
+                                  onStrike ? 1 : 0.55,
+                                ),
                                 fontSize: 16 * s,
-                                fontWeight:
-                                onStrike ? FontWeight.w800 : FontWeight.w500,
+                                fontWeight: onStrike
+                                    ? FontWeight.w800
+                                    : FontWeight.w500,
                               ),
                             ),
                           ),
                           if (onStrike) ...[
                             SizedBox(width: 5 * s),
-                            Icon(Icons.star_rounded,
-                                color: _C.accent, size: 15 * s),
+                            Icon(
+                              Icons.star_rounded,
+                              color: _C.accent,
+                              size: 15 * s,
+                            ),
                           ],
                         ],
                       ),
@@ -2531,9 +2805,10 @@ class _BatsmenCard extends StatelessWidget {
                         '$runs${onStrike ? '*' : ''}',
                         textAlign: TextAlign.right,
                         style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 16 * s,
-                            fontWeight: FontWeight.w800),
+                          color: Colors.white,
+                          fontSize: 16 * s,
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
                     ),
                     SizedBox(width: 12 * s),
@@ -2543,9 +2818,10 @@ class _BatsmenCard extends StatelessWidget {
                         '$balls',
                         textAlign: TextAlign.right,
                         style: TextStyle(
-                            color: Colors.white.withOpacity(0.5),
-                            fontSize: 15 * s,
-                            fontWeight: FontWeight.w500),
+                          color: Colors.white.withOpacity(0.5),
+                          fontSize: 15 * s,
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
                     ),
                   ],
@@ -2570,14 +2846,17 @@ class _BowlerCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final double s = _tvScale(context);
-    final bowlerName = (bowler?['playerName'] ?? bowler?['name'] ?? '').toString();
+    final bowlerName = (bowler?['playerName'] ?? bowler?['name'] ?? '')
+        .toString();
     final wkts = bowler?['wickets'] ?? 0;
     final runsConceded = bowler?['runsConceded'] ?? bowler?['runs'] ?? 0;
     final maidens = bowler?['maidens'] ?? 0;
     final bowlerOvers = bowler?['overs'] ?? 0;
     final bowlerDisplay = bowlerName.isEmpty
         ? '—'
-        : (bowlerName.length > 18 ? '${bowlerName.substring(0, 18)}…' : bowlerName);
+        : (bowlerName.length > 18
+        ? '${bowlerName.substring(0, 18)}…'
+        : bowlerName);
 
     return _CardShell(
       scale: s,
@@ -2587,12 +2866,15 @@ class _BowlerCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Text('BOWLER',
-                  style: TextStyle(
-                      color: _C.textDim,
-                      fontSize: 11 * s,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 1.5 * s)),
+              Text(
+                'BOWLER',
+                style: TextStyle(
+                  color: _C.textDim,
+                  fontSize: 11 * s,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1.5 * s,
+                ),
+              ),
               const Spacer(),
               _colHeader('O', s),
               SizedBox(width: 10 * s),
@@ -2613,9 +2895,10 @@ class _BowlerCard extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   maxLines: 2,
                   style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 16 * s,
-                      fontWeight: FontWeight.w800),
+                    color: Colors.white,
+                    fontSize: 16 * s,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
               _colVal('$bowlerOvers', s),
@@ -2626,12 +2909,15 @@ class _BowlerCard extends StatelessWidget {
               SizedBox(width: 10 * s),
               SizedBox(
                 width: 26 * s,
-                child: Text('$wkts',
-                    textAlign: TextAlign.right,
-                    style: TextStyle(
-                        color: _C.accent,
-                        fontSize: 20 * s,
-                        fontWeight: FontWeight.w900)),
+                child: Text(
+                  '$wkts',
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    color: _C.accent,
+                    fontSize: 20 * s,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
               ),
             ],
           ),
@@ -2642,20 +2928,28 @@ class _BowlerCard extends StatelessWidget {
 
   Widget _colHeader(String t, double s) => SizedBox(
     width: 26 * s,
-    child: Text(t,
-        textAlign: TextAlign.right,
-        style: TextStyle(
-            color: _C.textDim, fontSize: 11 * s, fontWeight: FontWeight.w800)),
+    child: Text(
+      t,
+      textAlign: TextAlign.right,
+      style: TextStyle(
+        color: _C.textDim,
+        fontSize: 11 * s,
+        fontWeight: FontWeight.w800,
+      ),
+    ),
   );
 
   Widget _colVal(String t, double s) => SizedBox(
     width: 26 * s,
-    child: Text(t,
-        textAlign: TextAlign.right,
-        style: TextStyle(
-            color: Colors.white.withOpacity(0.6),
-            fontSize: 15 * s,
-            fontWeight: FontWeight.w600)),
+    child: Text(
+      t,
+      textAlign: TextAlign.right,
+      style: TextStyle(
+        color: Colors.white.withOpacity(0.6),
+        fontSize: 15 * s,
+        fontWeight: FontWeight.w600,
+      ),
+    ),
   );
 }
 
@@ -2750,8 +3044,11 @@ class _SponsoredBannerState extends State<_SponsoredBanner> {
                         color: Colors.white.withOpacity(0.06),
                         borderRadius: BorderRadius.circular(10 * s),
                       ),
-                      child: Icon(_iconFor(ad['icon']!),
-                          color: Colors.white.withOpacity(0.5), size: 18 * s),
+                      child: Icon(
+                        _iconFor(ad['icon']!),
+                        color: Colors.white.withOpacity(0.5),
+                        size: 18 * s,
+                      ),
                     ),
                     SizedBox(width: 14 * s),
                     Expanded(
@@ -2759,21 +3056,25 @@ class _SponsoredBannerState extends State<_SponsoredBanner> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Text('SPONSORED',
-                              style: TextStyle(
-                                  color: Colors.white.withOpacity(0.28),
-                                  fontSize: 9 * s,
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: 1.2 * s)),
+                          Text(
+                            'SPONSORED',
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.28),
+                              fontSize: 9 * s,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 1.2 * s,
+                            ),
+                          ),
                           SizedBox(height: 3 * s),
                           Text(
                             ad['title']!,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                                color: Colors.white.withOpacity(0.75),
-                                fontSize: 13 * s,
-                                fontWeight: FontWeight.w700),
+                              color: Colors.white.withOpacity(0.75),
+                              fontSize: 13 * s,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
                         ],
                       ),
@@ -2781,19 +3082,23 @@ class _SponsoredBannerState extends State<_SponsoredBanner> {
                     SizedBox(width: 12 * s),
                     Container(
                       padding: EdgeInsets.symmetric(
-                          horizontal: 16 * s, vertical: 9 * s),
+                        horizontal: 16 * s,
+                        vertical: 9 * s,
+                      ),
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(20 * s),
-                        border:
-                        Border.all(color: Colors.white.withOpacity(0.18)),
+                        border: Border.all(
+                          color: Colors.white.withOpacity(0.18),
+                        ),
                       ),
                       child: Text(
                         ad['cta']!,
                         style: TextStyle(
-                            color: Colors.white.withOpacity(0.7),
-                            fontSize: 11 * s,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 0.5 * s),
+                          color: Colors.white.withOpacity(0.7),
+                          fontSize: 11 * s,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.5 * s,
+                        ),
                       ),
                     ),
                   ],
@@ -2830,47 +3135,55 @@ class _SponsoredBannerState extends State<_SponsoredBanner> {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// INNINGS BREAK OVERLAY — wired into LiveScoreScreen's build() so it is
-// actually shown between innings, TV-scaled. Used only inside LiveScoreScreen.
-// Displays: 1st innings score (runs/wickets) and the target for the chase.
-// NOW also carries tournamentId/matchId/repo/firstInningsId so it can open
-// the new _FirstInningsSummaryScreen via the "FULL SCORECARD" button below.
-// ═══════════════════════════════════════════════════════════════════════════════
 class _InningsBreakOverlay extends StatelessWidget {
   final String tournamentId;
   final String matchId;
   final LiveScoreRepository repo;
   final String? firstInningsId;
-  final String team1Name, team2Name;
+
+  final String team1Name;
+  final String team2Name;
   final String? battingTeamName;
-  final int firstInningsRuns, firstInningsWickets;
+
+  final int firstInningsRuns;
+  final int firstInningsWickets;
+
   final Animation<double> pulseAnim;
 
+  final VoidCallback onSummaryViewed;
+
   const _InningsBreakOverlay({
+    super.key,
     required this.tournamentId,
     required this.matchId,
     required this.repo,
+    this.firstInningsId,
+
     required this.team1Name,
     required this.team2Name,
+    this.battingTeamName,
+
     required this.firstInningsRuns,
     required this.firstInningsWickets,
-    required this.pulseAnim,
-    this.firstInningsId,
-    this.battingTeamName,
-  });
 
+    required this.pulseAnim,
+
+    required this.onSummaryViewed,
+  });
   @override
   Widget build(BuildContext context) {
     final double s = _tvScale(context);
     return Column(
       children: [
-        _TeamsHeaderStatic(team1Name: team1Name, team2Name: team2Name, scale: s),
+        _TeamsHeaderStatic(
+          team1Name: team1Name,
+          team2Name: team2Name,
+          scale: s,
+        ),
         SizedBox(height: 20 * s),
         _CardShell(
           scale: s,
-          padding: EdgeInsets.symmetric(
-              horizontal: 32 * s, vertical: 40 * s),
+          padding: EdgeInsets.symmetric(horizontal: 32 * s, vertical: 40 * s),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -2883,12 +3196,16 @@ class _InningsBreakOverlay extends StatelessWidget {
                   border: Border.all(color: _C.accent.withOpacity(0.2)),
                   boxShadow: [
                     BoxShadow(
-                        color: _C.accent.withOpacity(0.15),
-                        blurRadius: 20 * s),
+                      color: _C.accent.withOpacity(0.15),
+                      blurRadius: 20 * s,
+                    ),
                   ],
                 ),
-                child: Icon(Icons.sports_cricket,
-                    color: _C.accent, size: 28 * s),
+                child: Icon(
+                  Icons.sports_cricket,
+                  color: _C.accent,
+                  size: 28 * s,
+                ),
               ),
               SizedBox(height: 20 * s),
               Text(
@@ -2915,7 +3232,9 @@ class _InningsBreakOverlay extends StatelessWidget {
               SizedBox(height: 24 * s),
               Container(
                 padding: EdgeInsets.symmetric(
-                    horizontal: 26 * s, vertical: 16 * s),
+                  horizontal: 26 * s,
+                  vertical: 16 * s,
+                ),
                 decoration: BoxDecoration(
                   color: _C.orange.withOpacity(0.07),
                   borderRadius: BorderRadius.circular(14 * s),
@@ -2965,7 +3284,9 @@ class _InningsBreakOverlay extends StatelessWidget {
               SizedBox(height: 14 * s),
               Container(
                 padding: EdgeInsets.symmetric(
-                    horizontal: 18 * s, vertical: 9 * s),
+                  horizontal: 18 * s,
+                  vertical: 9 * s,
+                ),
                 decoration: BoxDecoration(
                   color: _C.gold.withOpacity(0.07),
                   borderRadius: BorderRadius.circular(10 * s),
@@ -2991,26 +3312,30 @@ class _InningsBreakOverlay extends StatelessWidget {
               // ── NEW: Full Scorecard button — opens the 1st-innings
               // summary screen; popping it returns here automatically. ──
               GestureDetector(
-                onTap: () {
-                  Navigator.of(context).push(
+                onTap: () async {
+                  await Navigator.push(
+                    context,
                     MaterialPageRoute(
                       builder: (_) => _FirstInningsSummaryScreen(
                         tournamentId: tournamentId,
                         matchId: matchId,
+                        repo: repo,
+                        firstInningsId: firstInningsId,
                         team1Name: team1Name,
                         team2Name: team2Name,
                         battingTeamName: battingTeamName,
                         firstInningsRuns: firstInningsRuns,
                         firstInningsWickets: firstInningsWickets,
-                        firstInningsId: firstInningsId,
-                        repo: repo,
                       ),
                     ),
                   );
+                  onSummaryViewed();
                 },
                 child: Container(
                   padding: EdgeInsets.symmetric(
-                      horizontal: 22 * s, vertical: 12 * s),
+                    horizontal: 22 * s,
+                    vertical: 12 * s,
+                  ),
                   decoration: BoxDecoration(
                     color: _C.accent.withOpacity(0.06),
                     borderRadius: BorderRadius.circular(26 * s),
@@ -3019,15 +3344,21 @@ class _InningsBreakOverlay extends StatelessWidget {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.assignment_outlined,
-                          color: _C.accent, size: 15 * s),
+                      Icon(
+                        Icons.assignment_outlined,
+                        color: _C.accent,
+                        size: 15 * s,
+                      ),
                       SizedBox(width: 8 * s),
-                      Text('FULL SCORECARD',
-                          style: TextStyle(
-                              color: _C.accent,
-                              fontSize: 12 * s,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 1 * s)),
+                      Text(
+                        'FULL SCORECARD',
+                        style: TextStyle(
+                          color: _C.accent,
+                          fontSize: 12 * s,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 1 * s,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -3043,7 +3374,8 @@ class _InningsBreakOverlay extends StatelessWidget {
                       height: 14 * s,
                       child: CircularProgressIndicator(
                         color: _C.accent.withOpacity(
-                            0.6 + 0.4 * pulseAnim.value),
+                          0.6 + 0.4 * pulseAnim.value,
+                        ),
                         strokeWidth: 2 * s,
                       ),
                     ),
@@ -3092,8 +3424,7 @@ class _MatchEndedDialog extends StatelessWidget {
           filter: ImageFilter.blur(sigmaX: 24 * s, sigmaY: 24 * s),
           child: Container(
             width: 440 * s,
-            padding: EdgeInsets.symmetric(
-                horizontal: 48 * s, vertical: 52 * s),
+            padding: EdgeInsets.symmetric(horizontal: 48 * s, vertical: 52 * s),
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
@@ -3104,15 +3435,13 @@ class _MatchEndedDialog extends StatelessWidget {
                 ],
               ),
               borderRadius: BorderRadius.circular(28 * s),
-              border: Border.all(
-                  color: _C.gold.withOpacity(0.28), width: 1.5),
+              border: Border.all(color: _C.gold.withOpacity(0.28), width: 1.5),
               boxShadow: [
+                BoxShadow(color: _C.gold.withOpacity(0.12), blurRadius: 48 * s),
                 BoxShadow(
-                    color: _C.gold.withOpacity(0.12),
-                    blurRadius: 48 * s),
-                BoxShadow(
-                    color: Colors.black.withOpacity(0.55),
-                    blurRadius: 28 * s),
+                  color: Colors.black.withOpacity(0.55),
+                  blurRadius: 28 * s,
+                ),
               ],
             ),
             child: Column(
@@ -3130,16 +3459,21 @@ class _MatchEndedDialog extends StatelessWidget {
                       ],
                     ),
                     border: Border.all(
-                        color: _C.gold.withOpacity(0.35),
-                        width: 1.5),
+                      color: _C.gold.withOpacity(0.35),
+                      width: 1.5,
+                    ),
                     boxShadow: [
                       BoxShadow(
-                          color: _C.gold.withOpacity(0.2),
-                          blurRadius: 24 * s),
+                        color: _C.gold.withOpacity(0.2),
+                        blurRadius: 24 * s,
+                      ),
                     ],
                   ),
-                  child: Icon(Icons.emoji_events_rounded,
-                      color: _C.gold, size: 36 * s),
+                  child: Icon(
+                    Icons.emoji_events_rounded,
+                    color: _C.gold,
+                    size: 36 * s,
+                  ),
                 ),
                 SizedBox(height: 24 * s),
                 Text(
@@ -3165,12 +3499,13 @@ class _MatchEndedDialog extends StatelessWidget {
                 Container(
                   width: double.infinity,
                   padding: EdgeInsets.symmetric(
-                      horizontal: 22 * s, vertical: 14 * s),
+                    horizontal: 22 * s,
+                    vertical: 14 * s,
+                  ),
                   decoration: BoxDecoration(
                     color: _C.orange.withOpacity(0.08),
                     borderRadius: BorderRadius.circular(14 * s),
-                    border: Border.all(
-                        color: _C.orange.withOpacity(0.25)),
+                    border: Border.all(color: _C.orange.withOpacity(0.25)),
                   ),
                   child: Text(
                     resultText,
@@ -3186,8 +3521,9 @@ class _MatchEndedDialog extends StatelessWidget {
                 Text(
                   'What would you like to do?',
                   style: TextStyle(
-                      color: Colors.white.withOpacity(0.3),
-                      fontSize: 13 * s),
+                    color: Colors.white.withOpacity(0.3),
+                    fontSize: 13 * s,
+                  ),
                 ),
                 SizedBox(height: 24 * s),
                 SizedBox(
@@ -3195,16 +3531,17 @@ class _MatchEndedDialog extends StatelessWidget {
                   child: OutlinedButton.icon(
                     onPressed: onViewSummary,
                     icon: Icon(Icons.bar_chart, size: 18 * s),
-                    label: Text('View Match Summary',
-                        style: TextStyle(fontSize: 15 * s)),
+                    label: Text(
+                      'View Match Summary',
+                      style: TextStyle(fontSize: 15 * s),
+                    ),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: _C.purple,
-                      side:
-                      BorderSide(color: _C.purple, width: 1.5),
-                      padding: EdgeInsets.symmetric(
-                          vertical: 16 * s),
+                      side: BorderSide(color: _C.purple, width: 1.5),
+                      padding: EdgeInsets.symmetric(vertical: 16 * s),
                       shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14 * s)),
+                        borderRadius: BorderRadius.circular(14 * s),
+                      ),
                     ),
                   ),
                 ),
@@ -3212,49 +3549,48 @@ class _MatchEndedDialog extends StatelessWidget {
                 SizedBox(
                   width: double.infinity,
                   child: Focus(
-                    child: Builder(builder: (ctx) {
-                      final focused = Focus.of(ctx).hasFocus;
-                      return GestureDetector(
-                        onTap: onBack,
-                        child: AnimatedContainer(
-                          duration:
-                          const Duration(milliseconds: 150),
-                          padding: EdgeInsets.symmetric(
-                              vertical: 16 * s),
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: focused
-                                  ? [_C.accent, _C.accentDim]
-                                  : [
-                                _C.accent.withOpacity(0.85),
-                                _C.accentDim.withOpacity(0.85),
-                              ],
+                    child: Builder(
+                      builder: (ctx) {
+                        final focused = Focus.of(ctx).hasFocus;
+                        return GestureDetector(
+                          onTap: onBack,
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 150),
+                            padding: EdgeInsets.symmetric(vertical: 16 * s),
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: focused
+                                    ? [_C.accent, _C.accentDim]
+                                    : [
+                                  _C.accent.withOpacity(0.85),
+                                  _C.accentDim.withOpacity(0.85),
+                                ],
+                              ),
+                              borderRadius: BorderRadius.circular(14 * s),
+                              boxShadow: focused
+                                  ? [
+                                BoxShadow(
+                                  color: _C.accent.withOpacity(0.4),
+                                  blurRadius: 20 * s,
+                                ),
+                              ]
+                                  : [],
                             ),
-                            borderRadius:
-                            BorderRadius.circular(14 * s),
-                            boxShadow: focused
-                                ? [
-                              BoxShadow(
-                                  color: _C.accent
-                                      .withOpacity(0.4),
-                                  blurRadius: 20 * s)
-                            ]
-                                : [],
-                          ),
-                          child: Center(
-                            child: Text(
-                              'Back to Tournament',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 15 * s,
-                                fontWeight: FontWeight.w700,
-                                letterSpacing: 0.3 * s,
+                            child: Center(
+                              child: Text(
+                                'Back to Tournament',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 15 * s,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 0.3 * s,
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      );
-                    }),
+                        );
+                      },
+                    ),
                   ),
                 ),
               ],
@@ -3281,8 +3617,7 @@ class _PremiumForcedLogoutDialog extends StatelessWidget {
           filter: ImageFilter.blur(sigmaX: 24 * s, sigmaY: 24 * s),
           child: Container(
             width: 400 * s,
-            padding: EdgeInsets.symmetric(
-                horizontal: 48 * s, vertical: 52 * s),
+            padding: EdgeInsets.symmetric(horizontal: 48 * s, vertical: 52 * s),
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
@@ -3294,11 +3629,14 @@ class _PremiumForcedLogoutDialog extends StatelessWidget {
               ),
               borderRadius: BorderRadius.circular(28 * s),
               border: Border.all(
-                  color: _C.danger.withOpacity(0.22), width: 1.5),
+                color: _C.danger.withOpacity(0.22),
+                width: 1.5,
+              ),
               boxShadow: [
                 BoxShadow(
-                    color: _C.danger.withOpacity(0.1),
-                    blurRadius: 40 * s),
+                  color: _C.danger.withOpacity(0.1),
+                  blurRadius: 40 * s,
+                ),
               ],
             ),
             child: Column(
@@ -3310,16 +3648,19 @@ class _PremiumForcedLogoutDialog extends StatelessWidget {
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color: _C.danger.withOpacity(0.07),
-                    border: Border.all(
-                        color: _C.danger.withOpacity(0.25)),
+                    border: Border.all(color: _C.danger.withOpacity(0.25)),
                     boxShadow: [
                       BoxShadow(
-                          color: _C.danger.withOpacity(0.15),
-                          blurRadius: 20 * s),
+                        color: _C.danger.withOpacity(0.15),
+                        blurRadius: 20 * s,
+                      ),
                     ],
                   ),
-                  child: Icon(Icons.logout_rounded,
-                      color: _C.danger, size: 32 * s),
+                  child: Icon(
+                    Icons.logout_rounded,
+                    color: _C.danger,
+                    size: 32 * s,
+                  ),
                 ),
                 SizedBox(height: 28 * s),
                 Text(
@@ -3346,7 +3687,9 @@ class _PremiumForcedLogoutDialog extends StatelessWidget {
                   width: 24 * s,
                   height: 24 * s,
                   child: CircularProgressIndicator(
-                      color: _C.accent, strokeWidth: 2.5 * s),
+                    color: _C.accent,
+                    strokeWidth: 2.5 * s,
+                  ),
                 ),
               ],
             ),
@@ -3375,14 +3718,12 @@ class _BallByBallTracker extends StatefulWidget {
   });
 
   @override
-  State<_BallByBallTracker> createState() =>
-      _BallByBallTrackerState();
+  State<_BallByBallTracker> createState() => _BallByBallTrackerState();
 }
 
 class _BallByBallTrackerState extends State<_BallByBallTracker> {
   late int _trackedOver = widget.overNumber;
-  late Stream<QuerySnapshot> _ballsStream =
-  widget.repo.watchCurrentOverBalls(
+  late Stream<QuerySnapshot> _ballsStream = widget.repo.watchCurrentOverBalls(
     widget.tournamentId,
     widget.matchId,
     widget.inningsId,
@@ -3455,7 +3796,6 @@ class _BallByBallTrackerState extends State<_BallByBallTracker> {
     }
   }
 
-
   @override
   Widget build(BuildContext context) {
     final double s = _tvScale(context);
@@ -3496,16 +3836,15 @@ class _BallByBallTrackerState extends State<_BallByBallTracker> {
                   ? Text(
                 'No balls bowled yet this over',
                 style: TextStyle(
-                    color: Colors.white.withOpacity(0.25),
-                    fontSize: 12 * s),
+                  color: Colors.white.withOpacity(0.25),
+                  fontSize: 12 * s,
+                ),
               )
                   : SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 reverse: true,
                 child: Row(
-                  children: balls
-                      .map((b) => _BallChip(ball: b))
-                      .toList(),
+                  children: balls.map((b) => _BallChip(ball: b)).toList(),
                 ),
               ),
             ),
@@ -3596,11 +3935,7 @@ class _BallChip extends StatelessWidget {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// AMBIENT GLOW (UNCHANGED — sizes are scaled at the LiveScoreScreen call site,
-// so this shared widget itself needs no modification and other screens are
-// unaffected)
-// ═══════════════════════════════════════════════════════════════════════════════
+// ══════════════
 class _AmbientGlow extends StatelessWidget {
   final Color color;
   final double size;

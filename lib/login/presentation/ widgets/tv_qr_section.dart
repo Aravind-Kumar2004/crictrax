@@ -91,7 +91,7 @@ class _TvQrSectionState extends State<TvQrSection> {
                   userId: userId,
                   displayName: displayName,
                   email: email,
-                  sessionId: sessionId, 
+                  sessionId: sessionId,
                 ),
                 transitionsBuilder: (_, animation, __, child) =>
                     FadeTransition(opacity: animation, child: child),

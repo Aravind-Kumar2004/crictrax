@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import '../dashboard_screen.dart';
 
 // ─── Ad Model ────────────────────────────────────────────────────────────────
 class AdSlide {
@@ -45,6 +47,9 @@ class _AdBannerWidgetState extends State<AdBannerWidget>
   late Animation<double> _glowAnim;
   late Animation<Offset> _slideAnim;
   late Animation<double> _fadeAnim;
+  final FocusNode _bannerFocus = FocusNode();
+
+  bool _hasFocus = false;
 
   Timer? _autoTimer;
   int _currentPage = 0;
@@ -140,10 +145,15 @@ class _AdBannerWidgetState extends State<AdBannerWidget>
     _phraseCtrl.forward();
     _startAutoPlay();
   }
-
   void _startAutoPlay() {
+    _autoTimer?.cancel();
+
     _autoTimer = Timer.periodic(widget.autoPlayInterval, (_) {
+
+      if (_hasFocus) return;
+
       final next = (_currentPage + 1) % _slides.length;
+
       _pageCtrl.animateToPage(
         next,
         duration: const Duration(milliseconds: 700),
@@ -163,6 +173,7 @@ class _AdBannerWidgetState extends State<AdBannerWidget>
     _pageCtrl.dispose();
     _glowCtrl.dispose();
     _phraseCtrl.dispose();
+    _bannerFocus.dispose();
     super.dispose();
   }
 
@@ -172,21 +183,54 @@ class _AdBannerWidgetState extends State<AdBannerWidget>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // ── Fixed-height banner — constant across every slide ───────────────
-        SizedBox(
-          height: _bannerHeight,
-          width: double.infinity,
-          child: PageView.builder(
-            controller: _pageCtrl,
-            onPageChanged: _onPageChanged,
-            itemCount: _slides.length,
-            itemBuilder: (_, i) => _AdSlideCard(
-              key: ValueKey(i),
-              slide: _slides[i],
-              glowAnim: _glowAnim,
-              slideAnim: _slideAnim,
-              fadeAnim: _fadeAnim,
-            ),
-          ),
+        TvFocusWrapper(
+          focusNode: _bannerFocus,
+          onFocusChange: (focused) {
+            setState(() {
+              _hasFocus = focused;
+            });
+          },
+          onTap: () {
+            debugPrint("Advertisement Selected");
+          },
+          builder: (context, focused, hovered) {
+            return AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: focused
+                      ? const Color(0xFF00D4FF)
+                      : Colors.transparent,
+                  width: 3,
+                ),
+                boxShadow: focused
+                    ? [
+                  BoxShadow(
+                    color: const Color(0xFF00D4FF).withOpacity(.35),
+                    blurRadius: 20,
+                  ),
+                ]
+                    : [],
+              ),
+              child: SizedBox(
+                height: _bannerHeight,
+                width: double.infinity,
+                child: PageView.builder(
+                  controller: _pageCtrl,
+                  onPageChanged: _onPageChanged,
+                  itemCount: _slides.length,
+                  itemBuilder: (_, i) => _AdSlideCard(
+                    key: ValueKey(i),
+                    slide: _slides[i],
+                    glowAnim: _glowAnim,
+                    slideAnim: _slideAnim,
+                    fadeAnim: _fadeAnim,
+                  ),
+                ),
+              ),
+            );
+          },
         ),
         const SizedBox(height: 12),
         _buildDotIndicators(),
@@ -528,48 +572,51 @@ class _AdSlideCard extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.center,
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        // Large CTA button
-        GestureDetector(
-          onTap: () {},
-          child: AnimatedBuilder(
-            animation: glowAnim,
-            builder: (_, __) => Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
+
+        TvFocusWrapper(
+            onTap: () {
+            debugPrint("CTA Clicked");
+            },
+              builder: (context, focused, hovered) {
+                return AnimatedContainer(
+                  width: double.infinity,
+                  duration: const Duration(milliseconds: 200),
               decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    slide.accentColor,
-                    slide.accentColor.withOpacity(0.7),
-                  ],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+              color: focused
+              ? Colors.white
+              : Colors.transparent,
+                width: 2,
                 ),
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: slide.accentColor.withOpacity(glowAnim.value * 0.5),
-                    blurRadius: 16,
-                    spreadRadius: 1,
+               ),
+             child: AnimatedBuilder(
+               animation: glowAnim,
+                    builder: (_, __) => Container(
+                  width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                vertical: 14,
+                horizontal: 8,
+                    ),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                        colors: [
+                          slide.accentColor,
+                        slide.accentColor.withOpacity(0.7),
+                        ],
+                        ),
+                        borderRadius: BorderRadius.circular(12),
+                ),
+                      child: Text(
+                     slide.ctaLabel,
+                     textAlign: TextAlign.center,
                   ),
-                ],
-              ),
-              child: Text(
-                slide.ctaLabel,
-                textAlign: TextAlign.center,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0.8,
-                  height: 1.2,
                 ),
-              ),
-            ),
-          ),
-        ),
+                ),
+              );
+              },
+             ),
+
         const SizedBox(height: 16),
 
         // Rocket icon orb

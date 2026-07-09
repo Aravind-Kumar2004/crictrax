@@ -9,7 +9,6 @@ import '../../match_detail/presentation/match_detail_screen.dart';
 import 'widgets/match_card_widget.dart';
 import '../../live_score/presentation/live_score_screen.dart';
 import 'widgets/fixtures_bracket_widget.dart';
-import '../../background/dynamic_background_view.dart';
 import 'widgets/left_navigation_drawer.dart';
 import 'widgets/hero_banner.dart';
 import 'widgets/statistics_section.dart';
@@ -232,25 +231,25 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
           ),
 
 
-            // ── New permanent TV drawer + page content ─────────────────────
-            Row(
-              children: [
-                LeftNavigationDrawer(
-                  selected: _navSection,
-                  onSelect: (section) => setState(() => _navSection = section),
-                  onBack: () => Navigator.pop(context),
-                ),
+          // ── New permanent TV drawer + page content ─────────────────────
+          Row(
+            children: [
+              LeftNavigationDrawer(
+                selected: _navSection,
+                onSelect: (section) => setState(() => _navSection = section),
+                onBack: () => Navigator.pop(context),
+              ),
 
-                Expanded(
-                  child: FocusTraversalGroup(
-                    policy: ReadingOrderTraversalPolicy(),
-                    child: _buildSectionContent(),
-                  ),
+              Expanded(
+                child: FocusTraversalGroup(
+                  policy: ReadingOrderTraversalPolicy(),
+                  child: _buildSectionContent(),
                 ),
-              ],
-            ),
-          ],
-        ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
 
   }

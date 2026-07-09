@@ -24,9 +24,12 @@ class _C {
     end: Alignment.bottomRight,
   );
 }
-// ═══════════════════════════════════════════════════════════════════════════════
-// LOGIN SCREEN
-// ═══════════════════════════════════════════════════════════════════════════════
+
+// ─── Global TV Scale Helper ───────────────────────────────────────────────────
+double _tvScale(BuildContext context) {
+  return MediaQuery.of(context).size.width / 1920.0;
+}
+
 class LoginScreen extends StatefulWidget {
   const LoginScreen({Key? key}) : super(key: key);
 
@@ -69,6 +72,7 @@ class _LoginScreenState extends State<LoginScreen>
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
+    final s = _tvScale(context);
     final playerWidth = size.width * 0.40;
     final playerHeight = size.height * 0.85;
 
@@ -126,7 +130,7 @@ class _LoginScreenState extends State<LoginScreen>
 
           // ── 5. Left player PNG — clipped to a fixed width so it can't balloon ──
           Positioned(
-            left: 0,
+            left: -100,
             bottom: 0,
             child: Image.asset(
               'assets/images/players/login_left_player.png',
@@ -138,7 +142,7 @@ class _LoginScreenState extends State<LoginScreen>
 
           // ── 6. Right player PNG — same fixed width, clipped from the right ──
           Positioned(
-            right: 0,
+            right: -100,
             bottom: 0,
             child: Image.asset(
               'assets/images/players/login_right_player.png',
@@ -158,10 +162,8 @@ class _LoginScreenState extends State<LoginScreen>
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      _AnimatedLogo(glowAnim: _glowAnim),
-                      const SizedBox(height: 10),
                       _HeroHeadline(),
-                      const SizedBox(height: 20),
+                      SizedBox(height: 20 * s),
                       AnimatedBuilder(
                         animation: _floatAnim,
                         builder: (_, child) => Transform.translate(
@@ -170,9 +172,9 @@ class _LoginScreenState extends State<LoginScreen>
                         ),
                         child: TvQrSection(glowAnim: _glowAnim),
                       ),
-                      const SizedBox(height: 24),
+                      SizedBox(height: 24 * s),
                       _BottomSteps(),
-                      const SizedBox(height: 14),
+                      SizedBox(height: 14 * s),
                       _Footer(),
                     ],
                   ),
@@ -214,106 +216,18 @@ class _PlayerGlow extends StatelessWidget {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// ANIMATED LOGO
-// ═══════════════════════════════════════════════════════════════════════════════
-class _AnimatedLogo extends StatelessWidget {
-  final Animation<double> glowAnim;
-  const _AnimatedLogo({required this.glowAnim});
 
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: glowAnim,
-      builder: (_, __) => Container(
-        padding:
-        const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          color: Colors.white.withOpacity(0.05),
-          border: Border.all(
-            color: _C.accent
-                .withOpacity(0.25 + 0.2 * glowAnim.value),
-            width: 1.5,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: _C.accent
-                  .withOpacity(0.15 + 0.2 * glowAnim.value),
-              blurRadius: 28 + 12 * glowAnim.value,
-              spreadRadius: 2,
-            ),
-          ],
-        ),
-        child: Image.asset(
-          'assets/images/cricktrax_logo_login.png',
-          height: 48,
-          fit: BoxFit.fitHeight,
-          errorBuilder: (_, __, ___) => Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(9),
-                  gradient: _C.accentGrad,
-                  boxShadow: [
-                    BoxShadow(
-                      color: _C.accent.withOpacity(0.5),
-                      blurRadius: 14,
-                    ),
-                  ],
-                ),
-                child: const Icon(Icons.sports_cricket,
-                    color: Colors.white, size: 18),
-              ),
-              const SizedBox(width: 12),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    'CRICTRAX',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 3,
-                    ),
-                  ),
-                  Text(
-                    'TV',
-                    style: TextStyle(
-                      color: _C.accent,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 4,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// HERO HEADLINE
-// ═══════════════════════════════════════════════════════════════════════════════
 class _HeroHeadline extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
+    final s = _tvScale(context);
     return Column(
       children: [
         Text(
           'WELCOME TO',
           style: TextStyle(
             color: Colors.white.withOpacity(0.75),
-            fontSize: 14,
+            fontSize: 14 * s,
             fontWeight: FontWeight.w600,
             letterSpacing: 4,
           ),
@@ -325,11 +239,11 @@ class _HeroHeadline extends StatelessWidget {
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
           ).createShader(bounds),
-          child: const Text(
+          child: Text(
             'CRICTRAX TV',
             style: TextStyle(
               color: Colors.white,
-              fontSize: 40,
+              fontSize: 40 * s,
               fontWeight: FontWeight.w900,
               letterSpacing: -0.5,
               height: 1.0,
@@ -739,7 +653,7 @@ class _TvQrSectionState extends State<TvQrSection>
     // ── Responsive sizing (relative to actual screen, clamped so it never
     //    balloons on TV panels reporting large logical sizes) ───────────────
     final screenSize = MediaQuery.of(context).size;
-    final cardWidth = (screenSize.width * 0.24).clamp(260.0, 340.0);
+    final cardWidth = (screenSize.width * 0.24).clamp(320.0, 520.0);
     final qrSize = (screenSize.width * 0.11).clamp(140.0, 190.0);
     final loadingCardHeight = (screenSize.height * 0.24).clamp(160.0, 200.0);
 
@@ -747,19 +661,21 @@ class _TvQrSectionState extends State<TvQrSection>
       duration: const Duration(milliseconds: 400),
       switchInCurve: Curves.easeOut,
       switchOutCurve: Curves.easeIn,
-      child: _buildContent(cardWidth, qrSize, loadingCardHeight),
+      child: _buildContent(context, cardWidth, qrSize, loadingCardHeight),
     );
   }
 
-  Widget _buildContent(double cardWidth, double qrSize, double loadingCardHeight) {
-    if (_linking) return _buildLinkingState(cardWidth);
-    if (_expired) return _buildExpiredState(cardWidth);
+  Widget _buildContent(BuildContext context, double cardWidth, double qrSize,
+      double loadingCardHeight) {
+    if (_linking) return _buildLinkingState(context, cardWidth);
+    if (_expired) return _buildExpiredState(context, cardWidth);
     if (_qrData == null) return _buildLoadingState(cardWidth, loadingCardHeight);
-    return _buildQrCard(cardWidth, qrSize);
+    return _buildQrCard(context, cardWidth, qrSize);
   }
 
   // ── QR Glass Card ─────────────────────────────────────────────────────────
-  Widget _buildQrCard(double cardWidth, double qrSize) {
+  Widget _buildQrCard(BuildContext context, double cardWidth, double qrSize) {
+    final s = _tvScale(context);
     final mins =
     (_secondsLeft ~/ 60).toString().padLeft(2, '0');
     final secs =
@@ -849,7 +765,7 @@ class _TvQrSectionState extends State<TvQrSection>
                   ],
                 ),
 
-                const SizedBox(height: 14),
+                SizedBox(height: 14 * s),
 
                 // ── QR Code ──────────────────────────────────────
                 _PremiumQrCode(
@@ -858,7 +774,7 @@ class _TvQrSectionState extends State<TvQrSection>
                   qrSize: qrSize,
                 ),
 
-                const SizedBox(height: 14),
+                SizedBox(height: 14 * s),
 
                 // ── Scan instruction ─────────────────────────────
                 Row(
@@ -892,7 +808,7 @@ class _TvQrSectionState extends State<TvQrSection>
                   ],
                 ),
 
-                const SizedBox(height: 14),
+                SizedBox(height: 14 * s),
 
                 // ── Countdown ────────────────────────────────────
                 _PremiumCountdown(
@@ -910,7 +826,8 @@ class _TvQrSectionState extends State<TvQrSection>
   }
 
   // ── Linking State ─────────────────────────────────────────────────────────
-  Widget _buildLinkingState(double cardWidth) {
+  Widget _buildLinkingState(BuildContext context, double cardWidth) {
+    final s = _tvScale(context);
     return ClipRRect(
       borderRadius: BorderRadius.circular(28),
       child: BackdropFilter(
@@ -956,7 +873,7 @@ class _TvQrSectionState extends State<TvQrSection>
                 child: const Icon(Icons.check_rounded,
                     color: _C.success, size: 38),
               ),
-              const SizedBox(height: 24),
+              SizedBox(height: 24 * s),
               const Text(
                 'Account Linked!',
                 style: TextStyle(
@@ -966,12 +883,12 @@ class _TvQrSectionState extends State<TvQrSection>
                   letterSpacing: -0.3,
                 ),
               ),
-              const SizedBox(height: 10),
+              SizedBox(height: 10 * s),
               Text(
                 'Loading your dashboard…',
                 style: TextStyle(
                   color: Colors.white.withOpacity(0.4),
-                  fontSize: 14,
+                  fontSize: 14 * s,
                 ),
               ),
               const SizedBox(height: 32),
@@ -992,7 +909,8 @@ class _TvQrSectionState extends State<TvQrSection>
   }
 
   // ── Expired State ─────────────────────────────────────────────────────────
-  Widget _buildExpiredState(double cardWidth) {
+  Widget _buildExpiredState(BuildContext context, double cardWidth) {
+    final s = _tvScale(context);
     return ClipRRect(
       borderRadius: BorderRadius.circular(28),
       child: BackdropFilter(
@@ -1024,7 +942,7 @@ class _TvQrSectionState extends State<TvQrSection>
                 child: Icon(Icons.timer_off_rounded,
                     color: _C.danger.withOpacity(0.8), size: 32),
               ),
-              const SizedBox(height: 20),
+              SizedBox(height: 20 * s),
               const Text(
                 'QR Code Expired',
                 style: TextStyle(
@@ -1214,13 +1132,14 @@ class _PremiumCountdown extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = _tvScale(context);
     return Column(
       children: [
         Container(
           height: 1,
           color: Colors.white.withOpacity(0.08),
         ),
-        const SizedBox(height: 14),
+        SizedBox(height: 14 * s),
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -1248,7 +1167,7 @@ class _PremiumCountdown extends StatelessWidget {
             ),
           ],
         ),
-        const SizedBox(height: 10),
+        SizedBox(height: 10 * s),
         ClipRRect(
           borderRadius: BorderRadius.circular(6),
           child: LinearProgressIndicator(

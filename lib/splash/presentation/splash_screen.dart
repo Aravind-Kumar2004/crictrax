@@ -198,14 +198,23 @@ class _CinematicSplashState extends State<CinematicSplash>
     );
 
     // ── Navigate to LoginScreen (UNCHANGED — navigation/timer logic intact) ─
-    _controller.forward().then((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      debugPrint("FIRST FRAME RENDERED");
+
+      await _controller.forward();
+
       if (!mounted) return;
+      debugPrint("ANIMATION FINISHED");
       Navigator.of(context).pushReplacement(
         PageRouteBuilder(
           transitionDuration: const Duration(milliseconds: 800),
           pageBuilder: (_, __, ___) => LoginScreen(),
-          transitionsBuilder: (_, animation, __, child) =>
-              FadeTransition(opacity: animation, child: child),
+          transitionsBuilder: (_, animation, __, child) {
+            return FadeTransition(
+              opacity: animation,
+              child: child,
+            );
+          },
         ),
       );
     });

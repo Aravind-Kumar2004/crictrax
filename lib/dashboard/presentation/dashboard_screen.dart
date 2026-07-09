@@ -1284,27 +1284,6 @@ class _SideNavRailState extends State<_SideNavRail> {
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Row(
                     children: [
-                      AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        width: _expanded ? 40 : 36,
-                        height: _expanded ? 40 : 36,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(12),
-                          gradient: _DS.accentGrad,
-                          boxShadow: [
-                            BoxShadow(
-                              color: _DS.accent.withOpacity(0.35),
-                              blurRadius: 16,
-                              spreadRadius: 1,
-                            ),
-                          ],
-                        ),
-                        child: Icon(
-                          Icons.sports_cricket,
-                          color: Colors.white,
-                          size: _expanded ? 20 : 18,
-                        ),
-                      ),
                       AnimatedSize(
                         duration: const Duration(milliseconds: 200),
                         curve: Curves.easeOut,
@@ -1312,13 +1291,12 @@ class _SideNavRailState extends State<_SideNavRail> {
                             ? Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const SizedBox(width: 12),
                             Text(
                               'CRICTRAX',
                               style: TextStyle(
                                 color: _DS.accent,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w800,
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
                                 letterSpacing: 1.8,
                               ),
                             ),
