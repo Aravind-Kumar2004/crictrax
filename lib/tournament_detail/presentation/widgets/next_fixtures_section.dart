@@ -125,6 +125,27 @@ class _FixtureCard extends StatefulWidget {
 
 class _FixtureCardState extends State<_FixtureCard> {
   bool _focused = false;
+  final FocusNode _focusNode = FocusNode(debugLabel: 'next_fixture_card');
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  void _handleFocusChange(bool hasFocus) {
+    if (hasFocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        Scrollable.ensureVisible(
+          _focusNode.context ?? context,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+          alignment: 0.5,
+        );
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -133,7 +154,9 @@ class _FixtureCardState extends State<_FixtureCard> {
     final venue = _venueOf(m);
 
     return FocusableActionDetector(
+      focusNode: _focusNode,
       onShowFocusHighlight: (f) => setState(() => _focused = f),
+      onFocusChange: _handleFocusChange,
       actions: {
         ActivateIntent: CallbackAction<ActivateIntent>(onInvoke: (_) {
           widget.onTap();

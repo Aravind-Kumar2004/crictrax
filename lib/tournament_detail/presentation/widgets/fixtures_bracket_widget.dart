@@ -113,34 +113,37 @@ class FixturesBracketWidget extends StatelessWidget {
     return SingleChildScrollView(
       physics: const BouncingScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(32, 8, 32, 36),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Text('LEAGUE FIXTURES',
+      child: FocusTraversalGroup(
+        policy: ReadingOrderTraversalPolicy(),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text('LEAGUE FIXTURES',
+                    style: TextStyle(
+                      color: _C.accent,
+                      fontSize: 16, fontWeight: FontWeight.w800, letterSpacing: 0.8,
+                    )),
+                const Spacer(),
+                Text('All matches in league format',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.3),
+                      fontSize: 12, fontWeight: FontWeight.w500,
+                    )),
+              ],
+            ),
+            const SizedBox(height: 16),
+            _FixturesTable(matches: sorted, onMatchTap: onMatchTap),
+            const SizedBox(height: 20),
+            Center(
+              child: Text('All times are in IST (Indian Standard Time)',
                   style: TextStyle(
-                    color: _C.accent,
-                    fontSize: 16, fontWeight: FontWeight.w800, letterSpacing: 0.8,
+                    color: Colors.white.withOpacity(0.22), fontSize: 12,
                   )),
-              const Spacer(),
-              Text('All matches in league format',
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.3),
-                    fontSize: 12, fontWeight: FontWeight.w500,
-                  )),
-            ],
-          ),
-          const SizedBox(height: 16),
-          _FixturesTable(matches: sorted, onMatchTap: onMatchTap),
-          const SizedBox(height: 20),
-          Center(
-            child: Text('All times are in IST (Indian Standard Time)',
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.22), fontSize: 12,
-                )),
-          ),
-        ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -263,6 +266,28 @@ class _FixtureRow extends StatefulWidget {
 
 class _FixtureRowState extends State<_FixtureRow> {
   bool _focused = false;
+  final FocusNode _focusNode = FocusNode(debugLabel: 'fixture_row');
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  void _handleFocusChange(bool hasFocus) {
+    setState(() => _focused = hasFocus);
+    if (hasFocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        Scrollable.ensureVisible(
+          _focusNode.context ?? context,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+          alignment: 0.5,
+        );
+      });
+    }
+  }
 
   Color get _statusColor {
     if (widget.match.isCompleted) return _C.completed;
@@ -283,8 +308,15 @@ class _FixtureRowState extends State<_FixtureRow> {
     final isLv  = widget.match.isLive && !widget.match.isCompleted;
     final venue = _venueOf(widget.match);
 
-    return Focus(
-      onFocusChange: (f) => setState(() => _focused = f),
+    return FocusableActionDetector(
+      focusNode: _focusNode,
+      onFocusChange: _handleFocusChange,
+      actions: {
+        ActivateIntent: CallbackAction<ActivateIntent>(onInvoke: (_) {
+          widget.onTap();
+          return null;
+        }),
+      },
       child: GestureDetector(
         onTap: widget.onTap,
         child: AnimatedContainer(
@@ -302,6 +334,7 @@ class _FixtureRowState extends State<_FixtureRow> {
             borderRadius: widget.isLast
                 ? const BorderRadius.vertical(bottom: Radius.circular(15))
                 : BorderRadius.zero,
+            boxShadow: _focused ? [BoxShadow(color: sc.withOpacity(0.25), blurRadius: 14)] : [],
           ),
           child: Column(
             children: [

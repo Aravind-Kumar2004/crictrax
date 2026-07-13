@@ -67,12 +67,35 @@ class _ResultCard extends StatefulWidget {
 
 class _ResultCardState extends State<_ResultCard> {
   bool _focused = false;
+  final FocusNode _focusNode = FocusNode(debugLabel: 'recent_result_card');
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  void _handleFocusChange(bool hasFocus) {
+    if (hasFocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        Scrollable.ensureVisible(
+          _focusNode.context ?? context,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+          alignment: 0.5,
+        );
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final m = widget.match;
     return FocusableActionDetector(
+      focusNode: _focusNode,
       onShowFocusHighlight: (f) => setState(() => _focused = f),
+      onFocusChange: _handleFocusChange,
       actions: {
         ActivateIntent: CallbackAction<ActivateIntent>(onInvoke: (_) {
           widget.onTap();

@@ -1,4 +1,4 @@
-// match_entity.dart
+// TournamentMatchEntity.dart
 
 class MatchEntity {
   final String id;

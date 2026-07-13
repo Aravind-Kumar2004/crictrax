@@ -3,9 +3,10 @@ import 'dart:ui';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:crictrax/login/presentation/login_screen.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../../services/commentary_audio_service.dart';
 import '../data/models/repositories/live_score_repository.dart';
-
 
 // ─── Design Tokens ────────────────────────────────────────────────────────────
 class _C {
@@ -26,22 +27,85 @@ class _C {
   static const textDim = Color(0xFF7C93B3);
 }
 
-double _tvScale(BuildContext context) {
-  final double width = MediaQuery.of(context).size.width;
-  final bool isTv = width >= 1600;
-  if (!isTv) return 1.0;
-  const double designWidth = 2600.0;
-  return (width / designWidth).clamp(0.55, 0.85);
-}
+// ── TV overscan-safe padding (kept as-is; independent of text/element scale) ──
 EdgeInsets _tvSafePadding(BuildContext context) {
   final size = MediaQuery.of(context).size;
   final bool isTv = size.width >= 1600;
   if (!isTv) return EdgeInsets.zero;
   return EdgeInsets.symmetric(
-    horizontal: size.width * 0.05,   // 5% left/right
-    vertical: size.height * 0.05,    // 5% top/bottom
+    horizontal: size.width * 0.02,
+    vertical: size.height * 0.02,
   );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// D-PAD FOCUSABLE WRAPPER — makes any tappable element fully controllable via
+// a TV remote's D-pad. Wraps content in a Focus node, listens for the
+// remote's OK/Select/Enter key to trigger onTap, and reports focus state to
+// the builder so callers can render an accent-colored highlight. Flutter's
+// WidgetsApp already binds arrow keys to focus traversal by default, so
+// wrapping controls in Focus is all that's needed for D-pad movement between
+// them; this widget adds the "press OK to activate" behavior on top.
+// ═══════════════════════════════════════════════════════════════════════════════
+class _DpadFocusable extends StatefulWidget {
+  final VoidCallback onTap;
+  final Widget Function(BuildContext context, bool isFocused) builder;
+  final FocusNode? focusNode;
+  final bool autofocus;
+
+  const _DpadFocusable({
+    required this.onTap,
+    required this.builder,
+    this.focusNode,
+    this.autofocus = false,
+  });
+
+  @override
+  State<_DpadFocusable> createState() => _DpadFocusableState();
+}
+
+class _DpadFocusableState extends State<_DpadFocusable> {
+  FocusNode? _ownedNode;
+  bool _isFocused = false;
+
+  FocusNode get _node => widget.focusNode ?? (_ownedNode ??= FocusNode());
+
+  @override
+  void dispose() {
+    _ownedNode?.dispose();
+    super.dispose();
+  }
+
+  KeyEventResult _onKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is KeyDownEvent &&
+        (event.logicalKey == LogicalKeyboardKey.select ||
+            event.logicalKey == LogicalKeyboardKey.enter ||
+            event.logicalKey == LogicalKeyboardKey.numpadEnter ||
+            event.logicalKey == LogicalKeyboardKey.gameButtonA)) {
+      widget.onTap();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Focus(
+      focusNode: _node,
+      autofocus: widget.autofocus,
+      onKeyEvent: _onKeyEvent,
+      onFocusChange: (focused) {
+        if (mounted) setState(() => _isFocused = focused);
+      },
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: widget.builder(context, _isFocused),
+      ),
+    );
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // LIVE SCORE SCREEN
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -299,299 +363,309 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
   // ── Build ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    // ── TV-responsive scale factor (Android TV @ 1920x1080) ─────────────────
-    final double s = _tvScale(context);
     final EdgeInsets safe = _tvSafePadding(context);
 
     return Scaffold(
       backgroundColor: _C.bg,
-      body: Stack(
-        children: [
-          // ── Stadium background ──────────────────────────────────────────
-          Positioned.fill(
-            child: Image.asset(
-              'assets/images/backgrounds/login_bg.jpg',
-              fit: BoxFit.cover,
+      body: FocusTraversalGroup(
+        policy: ReadingOrderTraversalPolicy(),
+        child: Stack(
+          children: [
+            // ── Stadium background ──────────────────────────────────────
+            Positioned.fill(
+              child: Image.asset(
+                'assets/images/backgrounds/login_bg.jpg',
+                fit: BoxFit.cover,
+              ),
             ),
-          ),
 
-          // ── Cinematic dark overlay ──────────────────────────────────────
-          Positioned.fill(
-            child: Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.black.withOpacity(0.25),
-                    Colors.blue.withOpacity(0.08),
-                    Colors.black.withOpacity(0.35),
+            // ── Cinematic dark overlay ──────────────────────────────────
+            Positioned.fill(
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.black.withOpacity(0.25),
+                      Colors.blue.withOpacity(0.08),
+                      Colors.black.withOpacity(0.35),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
+            Positioned(
+              top: -80.h,
+              left: -60.w,
+              child: _AmbientGlow(color: _C.accent, size: 300.r),
+            ),
+            Positioned(
+              top: -60.h,
+              right: -40.w,
+              child: _AmbientGlow(color: _C.live, size: 220.r),
+            ),
+
+            // ── Discreet back / live chrome strip ─────────────────────────
+            SafeArea(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(
+                  28.w + safe.left,
+                  18.h + safe.top,
+                  28.w + safe.right,
+                  0,
+                ),
+                child: Row(
+                  children: [
+                    _DpadFocusable(
+                      onTap: () => Navigator.pop(context),
+                      builder: (context, focused) => AnimatedContainer(
+                        duration: const Duration(milliseconds: 150),
+                        padding: EdgeInsets.all(12.r),
+                        decoration: BoxDecoration(
+                          color: focused
+                              ? _C.accent.withOpacity(0.16)
+                              : Colors.white.withOpacity(0.06),
+                          borderRadius: BorderRadius.circular(11.r),
+                          border: Border.all(
+                            color: focused
+                                ? _C.accent
+                                : Colors.white.withOpacity(0.1),
+                            width: focused ? 2 : 1,
+                          ),
+                          boxShadow: focused
+                              ? [
+                            BoxShadow(
+                              color: _C.accent.withOpacity(0.45),
+                              blurRadius: 14.r,
+                            ),
+                          ]
+                              : [],
+                        ),
+                        child: Icon(
+                          Icons.arrow_back_rounded,
+                          color: focused
+                              ? _C.accent
+                              : Colors.white.withOpacity(0.55),
+                          size: 26.sp,
+                        ),
+                      ),
+                    ),
+                    SizedBox(width: 14.w),
+                    Text(
+                      'CRICTRAX',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.28),
+                        fontSize: 15.sp,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 3.2.sp,
+                      ),
+                    ),
+                    const Spacer(),
+                    AnimatedBuilder(
+                      animation: _pulseAnim,
+                      builder: (_, __) => Container(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 14.w,
+                          vertical: 7.h,
+                        ),
+                        decoration: BoxDecoration(
+                          color: _C.live.withOpacity(
+                            0.12 + 0.06 * _pulseAnim.value,
+                          ),
+                          borderRadius: BorderRadius.circular(9.r),
+                          border: Border.all(
+                            color: _C.live.withOpacity(
+                              0.4 + 0.2 * _pulseAnim.value,
+                            ),
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 8.r,
+                              height: 8.r,
+                              decoration: const BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: _C.live,
+                              ),
+                            ),
+                            SizedBox(width: 8.w),
+                            Text(
+                              'LIVE',
+                              style: TextStyle(
+                                color: _C.live,
+                                fontSize: 14.sp,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 2.sp,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               ),
             ),
-          ),
 
-          Positioned(
-            top: -80 * s,
-            left: -60 * s,
-            child: _AmbientGlow(color: _C.accent, size: 300 * s),
-          ),
-          Positioned(
-            top: -60 * s,
-            right: -40 * s,
-            child: _AmbientGlow(color: _C.live, size: 220 * s),
-          ),
+            // ── Main centered card stack ──────────────────────────────────
+            SafeArea(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: 1400.w),
+                  child: SingleChildScrollView(
+                    padding: EdgeInsets.fromLTRB(
+                      24.w + safe.left,
+                      24.h + safe.top,
+                      24.w + safe.right,
+                      24.h + safe.bottom,
+                    ),
+                    child: StreamBuilder<QuerySnapshot>(
+                      stream: _inningsStream,
+                      builder: (context, inningsSnap) {
+                        if (inningsSnap.hasError) {
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (mounted) _scheduleReconnect();
+                          });
+                          return _lastInningsId != null
+                              ? _buildCachedBar()
+                              : _buildErrorBar(inningsSnap.error.toString());
+                        }
 
-          // ── Discreet back / live chrome strip ───────────────────────────
-          SafeArea(
-            child: Padding(
-              padding: EdgeInsets.fromLTRB(
-                20 * s + safe.left,
-                12 * s + safe.top,
-                20 * s + safe.right,
-                0,
-              ),
-              child: Row(
-                children: [
-                  GestureDetector(
-                    onTap: () => Navigator.pop(context),
-                    child: Container(
-                      padding: EdgeInsets.all(8 * s),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.06),
-                        borderRadius: BorderRadius.circular(8 * s),
-                        border: Border.all(
-                          color: Colors.white.withOpacity(0.1),
-                        ),
-                      ),
-                      child: Icon(
-                        Icons.arrow_back_rounded,
-                        color: Colors.white.withOpacity(0.55),
-                        size: 18 * s,
-                      ),
-                    ),
-                  ),
-                  SizedBox(width: 10 * s),
-                  Text(
-                    'CRICTRAX',
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.28),
-                      fontSize: 11 * s,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 2.5 * s,
-                    ),
-                  ),
-                  const Spacer(),
-                  AnimatedBuilder(
-                    animation: _pulseAnim,
-                    builder: (_, __) => Container(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: 10 * s,
-                        vertical: 5 * s,
-                      ),
-                      decoration: BoxDecoration(
-                        color: _C.live.withOpacity(
-                          0.12 + 0.06 * _pulseAnim.value,
-                        ),
-                        borderRadius: BorderRadius.circular(7 * s),
-                        border: Border.all(
-                          color: _C.live.withOpacity(
-                            0.4 + 0.2 * _pulseAnim.value,
-                          ),
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Container(
-                            width: 6 * s,
-                            height: 6 * s,
-                            decoration: const BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: _C.live,
-                            ),
-                          ),
-                          SizedBox(width: 6 * s),
-                          Text(
-                            'LIVE',
-                            style: TextStyle(
-                              color: _C.live,
-                              fontSize: 10 * s,
-                              fontWeight: FontWeight.w900,
-                              letterSpacing: 1.5 * s,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
+                        if (inningsSnap.connectionState ==
+                            ConnectionState.waiting) {
+                          return _lastInningsId != null
+                              ? _buildCachedBar()
+                              : _buildStatusBar(
+                            label: 'Connecting to live feed…',
+                          );
+                        }
 
-          // ── Main centered card stack ────────────────────────────────────
-          SafeArea(
-            child: Center(
-              child: ConstrainedBox(
-                constraints: BoxConstraints(maxWidth: 960 * s),
-                child: SingleChildScrollView(
-                  padding: EdgeInsets.fromLTRB(
-                    24 * s + safe.left,
-                    24 * s + safe.top,
-                    24 * s + safe.right,
-                    24 * s + safe.bottom,
-                  ),
-                  child: StreamBuilder<QuerySnapshot>(
-                    stream: _inningsStream,
-                    builder: (context, inningsSnap) {
-                      if (inningsSnap.hasError) {
+                        if (!inningsSnap.hasData ||
+                            inningsSnap.data!.docs.isEmpty) {
+                          return _lastInningsId != null
+                              ? _buildCachedBar()
+                              : _buildStatusBar(
+                            label: 'Waiting for match to start…',
+                          );
+                        }
+
+                        _reconnectAttempt = 0;
+                        _reconnectTimer?.cancel();
+
+                        final docs = inningsSnap.data!.docs;
+
                         WidgetsBinding.instance.addPostFrameCallback((_) {
-                          if (mounted) _scheduleReconnect();
+                          if (mounted) _checkInningsCompletion(docs);
                         });
-                        return _lastInningsId != null
-                            ? _buildCachedBar(s)
-                            : _buildErrorBar(inningsSnap.error.toString(), s);
-                      }
 
-                      if (inningsSnap.connectionState ==
-                          ConnectionState.waiting) {
-                        return _lastInningsId != null
-                            ? _buildCachedBar(s)
-                            : _buildStatusBar(
-                          s,
-                          label: 'Connecting to live feed…',
-                        );
-                      }
+                        // ── Innings break: shown in-place, same themed
+                        // card stack as the rest of the screen, until the
+                        // 2nd innings stream starts flowing. ──────────────
+                        if (_showInningsBreak) {
+                          final firstInningsDocsForBreak = docs.where((d) {
+                            final data = d.data() as Map<String, dynamic>;
+                            return data['isSecondInnings'] != true;
+                          }).toList();
+                          final firstInningsIdForBreak =
+                          firstInningsDocsForBreak.isNotEmpty
+                              ? firstInningsDocsForBreak.first.id
+                              : null;
 
-                      if (!inningsSnap.hasData ||
-                          inningsSnap.data!.docs.isEmpty) {
-                        return _lastInningsId != null
-                            ? _buildCachedBar(s)
-                            : _buildStatusBar(
-                          s,
-                          label: 'Waiting for match to start…',
-                        );
-                      }
+                          return _InningsBreakOverlay(
+                            tournamentId: widget.tournamentId,
+                            matchId: widget.matchId,
+                            repo: _repo,
+                            firstInningsId: firstInningsIdForBreak,
+                            team1Name: widget.team1Name,
+                            team2Name: widget.team2Name,
+                            battingTeamName: _lastFirstInningsBattingTeamName,
+                            firstInningsRuns: _firstInningsRuns,
+                            firstInningsWickets: _firstInningsWickets,
+                            pulseAnim: _pulseAnim,
 
-                      _reconnectAttempt = 0;
-                      _reconnectTimer?.cancel();
+                            onSummaryViewed: () {
+                              setState(() {
+                                _summaryViewed = true;
+                                _showInningsBreak = false;
+                              });
+                            },
+                          );
+                        }
 
-                      final docs = inningsSnap.data!.docs;
+                        final secondInningsDocs = docs.where((d) {
+                          final data = d.data() as Map<String, dynamic>;
+                          return data['isSecondInnings'] == true;
+                        }).toList();
 
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        if (mounted) _checkInningsCompletion(docs);
-                      });
+                        final currentDoc = secondInningsDocs.isNotEmpty
+                            ? secondInningsDocs.first
+                            : docs.first;
 
-                      // ── Innings break: shown in-place, same themed
-                      // card stack as the rest of the screen, until the
-                      // 2nd innings stream starts flowing. ──────────────
-                      if (_showInningsBreak) {
-                        // Resolve the 1st-innings doc id so the new "Full
-                        // Scorecard" button on the break screen can fetch
-                        // that innings' batsmen/bowlers (ADDED — reads
-                        // from `docs` which is already available here;
-                        // does not touch any existing business logic). ──
-                        final firstInningsDocsForBreak = docs.where((d) {
+                        final innData = currentDoc.data() as Map<String, dynamic>;
+
+                        final firstInningsDocs = docs.where((d) {
                           final data = d.data() as Map<String, dynamic>;
                           return data['isSecondInnings'] != true;
                         }).toList();
-                        final firstInningsIdForBreak =
-                        firstInningsDocsForBreak.isNotEmpty
-                            ? firstInningsDocsForBreak.first.id
-                            : null;
 
-                        return _InningsBreakOverlay(
+                        String? firstInningsBattingTeamName;
+                        if (firstInningsDocs.isNotEmpty) {
+                          final firstData =
+                          firstInningsDocs.first.data()
+                          as Map<String, dynamic>;
+                          firstInningsBattingTeamName =
+                              (firstData['battingTeamName'] ?? '')
+                                  .toString()
+                                  .trim();
+                        }
+
+                        _lastInningsId = currentDoc.id;
+                        _lastInningsData = Map<String, dynamic>.from(innData);
+                        _lastFirstInningsBattingTeamName =
+                            firstInningsBattingTeamName;
+
+                        int? firstInningsTotal;
+                        if (secondInningsDocs.isNotEmpty &&
+                            firstInningsDocs.isNotEmpty) {
+                          final fd =
+                          firstInningsDocs.first.data()
+                          as Map<String, dynamic>;
+                          firstInningsTotal = (fd['totalRuns'] as num?)?.toInt();
+                        }
+
+                        return _BroadcastBottomPanel(
                           tournamentId: widget.tournamentId,
                           matchId: widget.matchId,
-                          repo: _repo,
-                          firstInningsId: firstInningsIdForBreak,
+                          inningsId: currentDoc.id,
+                          innData: innData,
                           team1Name: widget.team1Name,
                           team2Name: widget.team2Name,
-                          battingTeamName: _lastFirstInningsBattingTeamName,
-                          firstInningsRuns: _firstInningsRuns,
-                          firstInningsWickets: _firstInningsWickets,
+                          team1Id: widget.team1Id,
+                          team2Id: widget.team2Id,
+                          repo: _repo,
+                          firstInningsBattingTeamName:
+                          firstInningsBattingTeamName,
+                          firstInningsTotal: firstInningsTotal,
                           pulseAnim: _pulseAnim,
-
-                          onSummaryViewed: () {
-                            setState(() {
-                              _summaryViewed = true;
-                              _showInningsBreak = false;
-                            });
-                          },
+                          isSecondInnings: secondInningsDocs.isNotEmpty,
                         );
-                      }
-
-                      final secondInningsDocs = docs.where((d) {
-                        final data = d.data() as Map<String, dynamic>;
-                        return data['isSecondInnings'] == true;
-                      }).toList();
-
-                      final currentDoc = secondInningsDocs.isNotEmpty
-                          ? secondInningsDocs.first
-                          : docs.first;
-
-                      final innData = currentDoc.data() as Map<String, dynamic>;
-
-                      final firstInningsDocs = docs.where((d) {
-                        final data = d.data() as Map<String, dynamic>;
-                        return data['isSecondInnings'] != true;
-                      }).toList();
-
-                      String? firstInningsBattingTeamName;
-                      if (firstInningsDocs.isNotEmpty) {
-                        final firstData =
-                        firstInningsDocs.first.data()
-                        as Map<String, dynamic>;
-                        firstInningsBattingTeamName =
-                            (firstData['battingTeamName'] ?? '')
-                                .toString()
-                                .trim();
-                      }
-
-                      _lastInningsId = currentDoc.id;
-                      _lastInningsData = Map<String, dynamic>.from(innData);
-                      _lastFirstInningsBattingTeamName =
-                          firstInningsBattingTeamName;
-
-                      int? firstInningsTotal;
-                      if (secondInningsDocs.isNotEmpty &&
-                          firstInningsDocs.isNotEmpty) {
-                        final fd =
-                        firstInningsDocs.first.data()
-                        as Map<String, dynamic>;
-                        firstInningsTotal = (fd['totalRuns'] as num?)?.toInt();
-                      }
-
-                      return _BroadcastBottomPanel(
-                        tournamentId: widget.tournamentId,
-                        matchId: widget.matchId,
-                        inningsId: currentDoc.id,
-                        innData: innData,
-                        team1Name: widget.team1Name,
-                        team2Name: widget.team2Name,
-                        team1Id: widget.team1Id,
-                        team2Id: widget.team2Id,
-                        repo: _repo,
-                        firstInningsBattingTeamName:
-                        firstInningsBattingTeamName,
-                        firstInningsTotal: firstInningsTotal,
-                        pulseAnim: _pulseAnim,
-                        isSecondInnings: secondInningsDocs.isNotEmpty,
-                      );
-                    },
+                      },
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildCachedBar(double s) {
+  Widget _buildCachedBar() {
     return _BroadcastBottomPanel(
       tournamentId: widget.tournamentId,
       matchId: widget.matchId,
@@ -669,36 +743,32 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
     } catch (_) {}
   }
 
-  Widget _buildStatusBar(
-      double s, {
-        String label = 'Waiting for match to start…',
-      }) {
+  Widget _buildStatusBar({
+    String label = 'Waiting for match to start…',
+  }) {
     return Column(
       children: [
         _TeamsHeaderStatic(
           team1Name: widget.team1Name,
           team2Name: widget.team2Name,
-          scale: s,
         ),
-        SizedBox(height: 20 * s),
-        _StatusCard(label: label, isError: false, scale: s),
+        SizedBox(height: 26.h),
+        _StatusCard(label: label, isError: false),
       ],
     );
   }
 
-  Widget _buildErrorBar(String error, double s) {
+  Widget _buildErrorBar(String error) {
     return Column(
       children: [
         _TeamsHeaderStatic(
           team1Name: widget.team1Name,
           team2Name: widget.team2Name,
-          scale: s,
         ),
-        SizedBox(height: 20 * s),
+        SizedBox(height: 26.h),
         _StatusCard(
           label: 'Live data error — reconnecting…',
           isError: true,
-          scale: s,
         ),
       ],
     );
@@ -706,7 +776,7 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// MATCH SUMMARY SCREEN — UNCHANGED (different screen; not scaled per spec)
+// MATCH SUMMARY SCREEN
 // ═══════════════════════════════════════════════════════════════════════════════
 class _MatchSummaryScreen extends StatefulWidget {
   final String tournamentId;
@@ -776,171 +846,197 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _C.bg,
-      body: Stack(
-        children: [
-          // ── Stadium background (same as LiveScoreScreen) ────────────────
-          Positioned.fill(
-            child: Image.asset(
-              'assets/images/stadium_bg.jpeg',
-              fit: BoxFit.cover,
+      body: FocusTraversalGroup(
+        policy: ReadingOrderTraversalPolicy(),
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: Image.asset(
+                'assets/images/stadium_bg.jpeg',
+                fit: BoxFit.cover,
+              ),
             ),
-          ),
-
-          // ── Cinematic dark overlay ──────────────────────────────────────
-          Positioned.fill(
-            child: Container(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Color(0xF0050B14),
-                    Color(0xD9050B14),
-                    Color(0xB3050B14),
-                  ],
-                  stops: [0.0, 0.55, 1.0],
+            Positioned.fill(
+              child: Container(
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Color(0xF0050B14),
+                      Color(0xD9050B14),
+                      Color(0xB3050B14),
+                    ],
+                    stops: [0.0, 0.55, 1.0],
+                  ),
                 ),
               ),
             ),
-          ),
-
-          // ── Ambient glows ────────────────────────────────────────────────
-          Positioned(
-            top: -80,
-            left: -60,
-            child: _AmbientGlow(color: _C.accent, size: 300),
-          ),
-          Positioned(
-            top: -60,
-            right: -40,
-            child: _AmbientGlow(color: _C.gold, size: 220),
-          ),
-
-          SafeArea(
-            child: Column(
-              children: [
-                // ── Glass header bar ────────────────────────────────────
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
-                  child: _CardShell(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 14,
-                    ),
-                    child: Row(
-                      children: [
-                        GestureDetector(
-                          onTap: () => Navigator.pop(context),
-                          child: Container(
-                            padding: const EdgeInsets.all(9),
+            Positioned(
+              top: -80.h,
+              left: -60.w,
+              child: _AmbientGlow(color: _C.accent, size: 300.r),
+            ),
+            Positioned(
+              top: -60.h,
+              right: -40.w,
+              child: _AmbientGlow(color: _C.gold, size: 220.r),
+            ),
+            SafeArea(
+              child: Column(
+                children: [
+                  Padding(
+                    padding: EdgeInsets.fromLTRB(24.w, 16.h, 24.w, 0),
+                    child: _CardShell(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 20.w,
+                        vertical: 14.h,
+                      ),
+                      child: Row(
+                        children: [
+                          _DpadFocusable(
+                            onTap: () => Navigator.pop(context),
+                            builder: (context, focused) => AnimatedContainer(
+                              duration: const Duration(milliseconds: 150),
+                              padding: EdgeInsets.all(9.r),
+                              decoration: BoxDecoration(
+                                color: focused
+                                    ? _C.accent.withOpacity(0.16)
+                                    : Colors.white.withOpacity(0.06),
+                                borderRadius: BorderRadius.circular(9.r),
+                                border: Border.all(
+                                  color: focused
+                                      ? _C.accent
+                                      : Colors.white.withOpacity(0.1),
+                                  width: focused ? 2 : 1,
+                                ),
+                                boxShadow: focused
+                                    ? [
+                                  BoxShadow(
+                                    color: _C.accent.withOpacity(0.45),
+                                    blurRadius: 14.r,
+                                  ),
+                                ]
+                                    : [],
+                              ),
+                              child: Icon(
+                                Icons.arrow_back_rounded,
+                                color: focused
+                                    ? _C.accent
+                                    : Colors.white.withOpacity(0.75),
+                                size: 18.sp,
+                              ),
+                            ),
+                          ),
+                          SizedBox(width: 16.w),
+                          Container(
+                            padding: EdgeInsets.all(8.r),
                             decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.06),
-                              borderRadius: BorderRadius.circular(9),
+                              color: _C.gold.withOpacity(0.12),
+                              borderRadius: BorderRadius.circular(9.r),
                               border: Border.all(
-                                color: Colors.white.withOpacity(0.1),
+                                color: _C.gold.withOpacity(0.25),
                               ),
                             ),
                             child: Icon(
-                              Icons.arrow_back_rounded,
-                              color: Colors.white.withOpacity(0.75),
-                              size: 18,
+                              Icons.emoji_events,
+                              color: _C.gold,
+                              size: 20.sp,
                             ),
                           ),
-                        ),
-                        const SizedBox(width: 16),
-                        Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: _C.gold.withOpacity(0.12),
-                            borderRadius: BorderRadius.circular(9),
-                            border: Border.all(
-                              color: _C.gold.withOpacity(0.25),
-                            ),
-                          ),
-                          child: const Icon(
-                            Icons.emoji_events,
-                            color: _C.gold,
-                            size: 20,
-                          ),
-                        ),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                '${widget.team1Name} vs ${widget.team2Name}',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 17,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                widget.resultText,
-                                style: const TextStyle(
-                                  color: _C.orange,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        GestureDetector(
-                          onTap: () => Navigator.pop(context),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 10,
-                            ),
-                            decoration: BoxDecoration(
-                              color: _C.accent.withOpacity(0.08),
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(
-                                color: _C.accent.withOpacity(0.4),
-                              ),
-                            ),
-                            child: Row(
+                          SizedBox(width: 14.w),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                const Icon(
-                                  Icons.arrow_back,
-                                  color: _C.accent,
-                                  size: 14,
-                                ),
-                                const SizedBox(width: 8),
                                 Text(
-                                  'Back to Tournament',
+                                  '${widget.team1Name} vs ${widget.team2Name}',
                                   style: TextStyle(
-                                    color: _C.accent.withOpacity(0.9),
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w700,
+                                    color: Colors.white,
+                                    fontSize: 17.sp,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                SizedBox(height: 2.h),
+                                Text(
+                                  widget.resultText,
+                                  style: TextStyle(
+                                    color: _C.orange,
+                                    fontSize: 13.sp,
+                                    fontWeight: FontWeight.w600,
                                   ),
                                 ),
                               ],
                             ),
                           ),
-                        ),
-                      ],
+                          SizedBox(width: 12.w),
+                          _DpadFocusable(
+                            onTap: () => Navigator.pop(context),
+                            builder: (context, focused) => AnimatedContainer(
+                              duration: const Duration(milliseconds: 150),
+                              padding: EdgeInsets.symmetric(
+                                horizontal: 16.w,
+                                vertical: 10.h,
+                              ),
+                              decoration: BoxDecoration(
+                                color: focused
+                                    ? _C.accent.withOpacity(0.18)
+                                    : _C.accent.withOpacity(0.08),
+                                borderRadius: BorderRadius.circular(20.r),
+                                border: Border.all(
+                                  color: focused
+                                      ? _C.accent
+                                      : _C.accent.withOpacity(0.4),
+                                  width: focused ? 2 : 1,
+                                ),
+                                boxShadow: focused
+                                    ? [
+                                  BoxShadow(
+                                    color: _C.accent.withOpacity(0.4),
+                                    blurRadius: 16.r,
+                                  ),
+                                ]
+                                    : [],
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.arrow_back,
+                                    color: _C.accent,
+                                    size: 14.sp,
+                                  ),
+                                  SizedBox(width: 8.w),
+                                  Text(
+                                    'Back to Tournament',
+                                    style: TextStyle(
+                                      color: _C.accent.withOpacity(0.9),
+                                      fontSize: 12.sp,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
 
-                Expanded(
-                  child: _loading
-                      ? const Center(
-                    child: CircularProgressIndicator(color: _C.accent),
-                  )
-                      : _buildSummary(),
-                ),
-              ],
+                  Expanded(
+                    child: _loading
+                        ? const Center(
+                      child: CircularProgressIndicator(color: _C.accent),
+                    )
+                        : _buildSummary(),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -950,7 +1046,7 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
       return Center(
         child: Text(
           'No match data available',
-          style: TextStyle(color: Colors.white.withOpacity(0.38), fontSize: 18),
+          style: TextStyle(color: Colors.white.withOpacity(0.38), fontSize: 18.sp),
         ),
       );
     }
@@ -963,9 +1059,9 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
       });
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
+      padding: EdgeInsets.all(24.w),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 960),
+        constraints: BoxConstraints(maxWidth: 960.w),
         child: Column(
           children: inningsList.map((entry) {
             final innId = entry.key;
@@ -974,12 +1070,6 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
             final batTeam = (inn['battingTeamName'] ?? '').toString();
             final batsmen = _batsmen[innId] ?? [];
             final bowlers = _bowlers[innId] ?? [];
-            // ── Prefer official innings totals from Firestore (these
-            // already include extras — wides/no-balls/byes/leg-byes —
-            // which a sum of batsmen runs alone would miss). Fall back
-            // to summing batsmen/ballsFaced only if the innings document
-            // does not (yet) have these fields, so behavior is unchanged
-            // for any data that predates this field. ───────────────────
             final totalRuns = (inn['totalRuns'] as num?)?.toInt() ??
                 batsmen.fold<int>(
                   0,
@@ -996,64 +1086,63 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
                 ? '${inn['overs']}'
                 : '${totalBalls ~/ 6}.${totalBalls % 6}';
 
-            // ── Glass card shell replaces the old plain Container ───────
             return Padding(
-              padding: const EdgeInsets.only(bottom: 24),
+              padding: EdgeInsets.only(bottom: 24.h),
               child: _CardShell(
                 padding: EdgeInsets.zero,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 24,
-                        vertical: 14,
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 24.w,
+                        vertical: 14.h,
                       ),
                       decoration: BoxDecoration(
                         color: Colors.white.withOpacity(0.03),
-                        borderRadius: const BorderRadius.vertical(
-                          top: Radius.circular(20),
+                        borderRadius: BorderRadius.vertical(
+                          top: Radius.circular(20.r),
                         ),
                       ),
                       child: Row(
                         children: [
                           Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 4,
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 10.w,
+                              vertical: 4.h,
                             ),
                             decoration: BoxDecoration(
                               color: _C.purple.withOpacity(0.2),
-                              borderRadius: BorderRadius.circular(6),
+                              borderRadius: BorderRadius.circular(6.r),
                               border: Border.all(
                                 color: _C.purple.withOpacity(0.4),
                               ),
                             ),
                             child: Text(
                               'Innings ${isSecond ? 2 : 1}',
-                              style: const TextStyle(
+                              style: TextStyle(
                                 color: _C.purple,
-                                fontSize: 12,
+                                fontSize: 12.sp,
                                 fontWeight: FontWeight.w700,
                               ),
                             ),
                           ),
-                          const SizedBox(width: 16),
+                          SizedBox(width: 16.w),
                           Expanded(
                             child: Text(
                               batTeam.isNotEmpty ? batTeam : 'Batting Team',
-                              style: const TextStyle(
+                              style: TextStyle(
                                 color: Colors.white,
-                                fontSize: 18,
+                                fontSize: 18.sp,
                                 fontWeight: FontWeight.w700,
                               ),
                             ),
                           ),
                           Text(
                             '$totalRuns/$totalWkts ($overs ov)',
-                            style: const TextStyle(
+                            style: TextStyle(
                               color: _C.orange,
-                              fontSize: 20,
+                              fontSize: 20.sp,
                               fontWeight: FontWeight.w900,
                             ),
                           ),
@@ -1061,7 +1150,7 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
                       ),
                     ),
                     Padding(
-                      padding: const EdgeInsets.all(24),
+                      padding: EdgeInsets.all(24.w),
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -1070,7 +1159,7 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 _summaryLabel('BATTING', _C.orange),
-                                const SizedBox(height: 8),
+                                SizedBox(height: 8.h),
                                 _summaryHeader([
                                   'Batter',
                                   'R',
@@ -1079,7 +1168,7 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
                                   '6s',
                                   'SR',
                                 ]),
-                                const Divider(color: Colors.white12, height: 8),
+                                Divider(color: Colors.white12, height: 8.h),
                                 ...(batsmen..sort(
                                       (a, b) => ((b['runs'] ?? 0) as num)
                                       .compareTo((a['runs'] ?? 0) as num),
@@ -1088,13 +1177,13 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
                               ],
                             ),
                           ),
-                          const SizedBox(width: 32),
+                          SizedBox(width: 32.w),
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 _summaryLabel('BOWLING', _C.accent),
-                                const SizedBox(height: 8),
+                                SizedBox(height: 8.h),
                                 _summaryHeader([
                                   'Bowler',
                                   'O',
@@ -1102,7 +1191,7 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
                                   'W',
                                   'Eco',
                                 ]),
-                                const Divider(color: Colors.white12, height: 8),
+                                Divider(color: Colors.white12, height: 8.h),
                                 ...(bowlers..sort(
                                       (a, b) => ((b['wickets'] ?? 0) as num)
                                       .compareTo(
@@ -1129,33 +1218,33 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
   Widget _summaryLabel(String text, Color color) => Row(
     children: [
       Container(
-        width: 3,
-        height: 16,
+        width: 3.w,
+        height: 16.h,
         color: color,
-        margin: const EdgeInsets.only(right: 8),
+        margin: EdgeInsets.only(right: 8.w),
       ),
       Text(
         text,
         style: TextStyle(
           color: color,
-          fontSize: 12,
+          fontSize: 12.sp,
           fontWeight: FontWeight.w800,
-          letterSpacing: 1.2,
+          letterSpacing: 1.2.sp,
         ),
       ),
     ],
   );
 
   Widget _summaryHeader(List<String> cols) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 4),
+    padding: EdgeInsets.symmetric(vertical: 4.h),
     child: Row(
       children: [
         Expanded(
           child: Text(
             cols[0],
-            style: const TextStyle(
+            style: TextStyle(
               color: Colors.white38,
-              fontSize: 11,
+              fontSize: 11.sp,
               fontWeight: FontWeight.w700,
             ),
           ),
@@ -1164,13 +1253,13 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
             .skip(1)
             .map(
               (c) => SizedBox(
-            width: 42,
+            width: 42.w,
             child: Text(
               c,
               textAlign: TextAlign.center,
-              style: const TextStyle(
+              style: TextStyle(
                 color: Colors.white38,
-                fontSize: 11,
+                fontSize: 11.sp,
                 fontWeight: FontWeight.w700,
               ),
             ),
@@ -1189,7 +1278,7 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
     final sr = balls > 0 ? ((runs / balls) * 100).toStringAsFixed(1) : '0.0';
     final isOut = b['isOut'] == true;
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: EdgeInsets.symmetric(vertical: 8.h),
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: Colors.white10, width: 0.5)),
       ),
@@ -1200,7 +1289,7 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
               name.length > 16 ? '${name.substring(0, 16)}…' : name,
               style: TextStyle(
                 color: isOut ? Colors.white54 : Colors.white70,
-                fontSize: 13,
+                fontSize: 13.sp,
               ),
             ),
           ),
@@ -1221,7 +1310,7 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
     final wkts = (b['wickets'] ?? 0) as num;
     final eco = (b['economy'] ?? 0) as num;
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: EdgeInsets.symmetric(vertical: 8.h),
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: Colors.white10, width: 0.5)),
       ),
@@ -1230,7 +1319,7 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
           Expanded(
             child: Text(
               name.length > 16 ? '${name.substring(0, 16)}…' : name,
-              style: const TextStyle(color: Colors.white70, fontSize: 13),
+              style: TextStyle(color: Colors.white70, fontSize: 13.sp),
             ),
           ),
           _sc('$overs'),
@@ -1243,13 +1332,13 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
   }
 
   Widget _sc(String t, {bool bold = false, Color? color}) => SizedBox(
-    width: 42,
+    width: 42.w,
     child: Text(
       t,
       textAlign: TextAlign.center,
       style: TextStyle(
         color: color ?? Colors.white60,
-        fontSize: 13,
+        fontSize: 13.sp,
         fontWeight: bold ? FontWeight.w800 : FontWeight.w500,
       ),
     ),
@@ -1257,11 +1346,7 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// FIRST INNINGS SUMMARY SCREEN — NEW. Full scorecard for the completed 1st
-// innings plus the target for the chase. Reached only via the "FULL
-// SCORECARD" button on the Innings Break screen; popping it returns to the
-// LiveScoreScreen underneath (which keeps streaming as normal, unaffected).
-// This is purely additive — no existing screen/widget/logic is touched.
+// FIRST INNINGS SUMMARY SCREEN
 // ═══════════════════════════════════════════════════════════════════════════════
 class _FirstInningsSummaryScreen extends StatefulWidget {
   final String tournamentId;
@@ -1340,307 +1425,125 @@ class _FirstInningsSummaryScreenState
 
     return Scaffold(
       backgroundColor: _C.bg,
-      body: Stack(
-        children: [
-          Positioned.fill(
-            child: Image.asset(
-              'assets/images/stadium_bg.jpeg',
-              fit: BoxFit.cover,
+      body: FocusTraversalGroup(
+        policy: ReadingOrderTraversalPolicy(),
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: Image.asset(
+                'assets/images/stadium_bg.jpeg',
+                fit: BoxFit.cover,
+              ),
             ),
-          ),
-          Positioned.fill(
-            child: Container(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Color(0xF0050B14),
-                    Color(0xD9050B14),
-                    Color(0xB3050B14),
-                  ],
-                  stops: [0.0, 0.55, 1.0],
+            Positioned.fill(
+              child: Container(
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Color(0xF0050B14),
+                      Color(0xD9050B14),
+                      Color(0xB3050B14),
+                    ],
+                    stops: [0.0, 0.55, 1.0],
+                  ),
                 ),
               ),
             ),
-          ),
-          Positioned(
-            top: -80,
-            left: -60,
-            child: _AmbientGlow(color: _C.accent, size: 300),
-          ),
-          Positioned(
-            top: -60,
-            right: -40,
-            child: _AmbientGlow(color: _C.gold, size: 220),
-          ),
-          SafeArea(
-            child: Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
-                  child: _CardShell(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 14,
-                    ),
-                    child: Row(
-                      children: [
-                        GestureDetector(
-                          onTap: () => Navigator.pop(context),
-                          child: Container(
-                            padding: const EdgeInsets.all(9),
+            Positioned(
+              top: -80.h,
+              left: -60.w,
+              child: _AmbientGlow(color: _C.accent, size: 300.r),
+            ),
+            Positioned(
+              top: -60.h,
+              right: -40.w,
+              child: _AmbientGlow(color: _C.gold, size: 220.r),
+            ),
+            SafeArea(
+              child: Column(
+                children: [
+                  Padding(
+                    padding: EdgeInsets.fromLTRB(24.w, 16.h, 24.w, 0),
+                    child: _CardShell(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 20.w,
+                        vertical: 14.h,
+                      ),
+                      child: Row(
+                        children: [
+                          _DpadFocusable(
+                            onTap: () => Navigator.pop(context),
+                            builder: (context, focused) => AnimatedContainer(
+                              duration: const Duration(milliseconds: 150),
+                              padding: EdgeInsets.all(9.r),
+                              decoration: BoxDecoration(
+                                color: focused
+                                    ? _C.accent.withOpacity(0.16)
+                                    : Colors.white.withOpacity(0.06),
+                                borderRadius: BorderRadius.circular(9.r),
+                                border: Border.all(
+                                  color: focused
+                                      ? _C.accent
+                                      : Colors.white.withOpacity(0.1),
+                                  width: focused ? 2 : 1,
+                                ),
+                                boxShadow: focused
+                                    ? [
+                                  BoxShadow(
+                                    color: _C.accent.withOpacity(0.45),
+                                    blurRadius: 14.r,
+                                  ),
+                                ]
+                                    : [],
+                              ),
+                              child: Icon(
+                                Icons.arrow_back_rounded,
+                                color: focused
+                                    ? _C.accent
+                                    : Colors.white.withOpacity(0.75),
+                                size: 18.sp,
+                              ),
+                            ),
+                          ),
+                          SizedBox(width: 16.w),
+                          Container(
+                            padding: EdgeInsets.all(8.r),
                             decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.06),
-                              borderRadius: BorderRadius.circular(9),
+                              color: _C.orange.withOpacity(0.12),
+                              borderRadius: BorderRadius.circular(9.r),
                               border: Border.all(
-                                color: Colors.white.withOpacity(0.1),
+                                color: _C.orange.withOpacity(0.25),
                               ),
                             ),
                             child: Icon(
-                              Icons.arrow_back_rounded,
-                              color: Colors.white.withOpacity(0.75),
-                              size: 18,
+                              Icons.sports_cricket,
+                              color: _C.orange,
+                              size: 20.sp,
                             ),
                           ),
-                        ),
-                        const SizedBox(width: 16),
-                        Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: _C.orange.withOpacity(0.12),
-                            borderRadius: BorderRadius.circular(9),
-                            border: Border.all(
-                              color: _C.orange.withOpacity(0.25),
-                            ),
-                          ),
-                          child: const Icon(
-                            Icons.sports_cricket,
-                            color: _C.orange,
-                            size: 20,
-                          ),
-                        ),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                '${widget.team1Name} vs ${widget.team2Name}',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 17,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              const Text(
-                                '1st Innings Scorecard',
-                                style: TextStyle(
-                                  color: _C.textDim,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: _loading
-                      ? const Center(
-                    child: CircularProgressIndicator(color: _C.accent),
-                  )
-                      : SingleChildScrollView(
-                    padding: const EdgeInsets.all(24),
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 960),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          // ── Score + target banner ────────────────────
-                          _CardShell(
+                          SizedBox(width: 14.w),
+                          Expanded(
                             child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
                               children: [
                                 Text(
-                                  battingTeam.toUpperCase(),
-                                  style: const TextStyle(
-                                    color: Colors.white70,
-                                    fontSize: 12,
+                                  '${widget.team1Name} vs ${widget.team2Name}',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 17.sp,
                                     fontWeight: FontWeight.w800,
-                                    letterSpacing: 1.5,
                                   ),
                                 ),
-                                const SizedBox(height: 8),
-                                Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  crossAxisAlignment:
-                                  CrossAxisAlignment.baseline,
-                                  textBaseline: TextBaseline.alphabetic,
-                                  children: [
-                                    Text(
-                                      '${widget.firstInningsRuns}',
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 48,
-                                        fontWeight: FontWeight.w900,
-                                      ),
-                                    ),
-                                    Text(
-                                      '/${widget.firstInningsWickets}',
-                                      style: const TextStyle(
-                                        color: _C.accent,
-                                        fontSize: 48,
-                                        fontWeight: FontWeight.w900,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 16),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 18,
-                                    vertical: 10,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: _C.gold.withOpacity(0.08),
-                                    borderRadius: BorderRadius.circular(
-                                      12,
-                                    ),
-                                    border: Border.all(
-                                      color: _C.gold.withOpacity(0.25),
-                                    ),
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      const Icon(
-                                        Icons.flag_rounded,
-                                        color: _C.gold,
-                                        size: 16,
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        'Target: $target runs to win',
-                                        style: const TextStyle(
-                                          color: _C.gold,
-                                          fontSize: 15,
-                                          fontWeight: FontWeight.w800,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 24),
-                          // ── Batting / bowling tables ──────────────────
-                          _CardShell(
-                            padding: const EdgeInsets.all(24),
-                            child: Row(
-                              crossAxisAlignment:
-                              CrossAxisAlignment.start,
-                              children: [
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                    CrossAxisAlignment.start,
-                                    children: [
-                                      _fiLabel('BATTING', _C.orange),
-                                      const SizedBox(height: 8),
-                                      _fiHeader([
-                                        'Batter',
-                                        'R',
-                                        'B',
-                                        '4s',
-                                        '6s',
-                                        'SR',
-                                      ]),
-                                      const Divider(
-                                        color: Colors.white12,
-                                        height: 8,
-                                      ),
-                                      if (_batsmen.isEmpty)
-                                        Padding(
-                                          padding:
-                                          const EdgeInsets.symmetric(
-                                            vertical: 12,
-                                          ),
-                                          child: Text(
-                                            'No batting data available',
-                                            style: TextStyle(
-                                              color: Colors.white
-                                                  .withOpacity(0.35),
-                                              fontSize: 13,
-                                            ),
-                                          ),
-                                        )
-                                      else
-                                        ...(_batsmen..sort(
-                                              (a, b) =>
-                                              ((b['runs'] ?? 0)
-                                              as num)
-                                                  .compareTo(
-                                                (a['runs'] ?? 0)
-                                                as num,
-                                              ),
-                                        ))
-                                            .map(_fiBatsmanRow),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(width: 32),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                    CrossAxisAlignment.start,
-                                    children: [
-                                      _fiLabel('BOWLING', _C.accent),
-                                      const SizedBox(height: 8),
-                                      _fiHeader([
-                                        'Bowler',
-                                        'O',
-                                        'R',
-                                        'W',
-                                        'Eco',
-                                      ]),
-                                      const Divider(
-                                        color: Colors.white12,
-                                        height: 8,
-                                      ),
-                                      if (_bowlers.isEmpty)
-                                        Padding(
-                                          padding:
-                                          const EdgeInsets.symmetric(
-                                            vertical: 12,
-                                          ),
-                                          child: Text(
-                                            'No bowling data available',
-                                            style: TextStyle(
-                                              color: Colors.white
-                                                  .withOpacity(0.35),
-                                              fontSize: 13,
-                                            ),
-                                          ),
-                                        )
-                                      else
-                                        ...(_bowlers..sort(
-                                              (a, b) =>
-                                              ((b['wickets'] ?? 0)
-                                              as num)
-                                                  .compareTo(
-                                                (a['wickets'] ??
-                                                    0)
-                                                as num,
-                                              ),
-                                        ))
-                                            .map(_fiBowlerRow),
-                                    ],
+                                SizedBox(height: 2.h),
+                                Text(
+                                  '1st Innings Scorecard',
+                                  style: TextStyle(
+                                    color: _C.textDim,
+                                    fontSize: 13.sp,
+                                    fontWeight: FontWeight.w600,
                                   ),
                                 ),
                               ],
@@ -1650,11 +1553,210 @@ class _FirstInningsSummaryScreenState
                       ),
                     ),
                   ),
-                ),
-              ],
+                  Expanded(
+                    child: _loading
+                        ? const Center(
+                      child: CircularProgressIndicator(color: _C.accent),
+                    )
+                        : SingleChildScrollView(
+                      padding: EdgeInsets.all(24.w),
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(maxWidth: 960.w),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            _CardShell(
+                              child: Column(
+                                children: [
+                                  Text(
+                                    battingTeam.toUpperCase(),
+                                    style: TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 12.sp,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 1.5.sp,
+                                    ),
+                                  ),
+                                  SizedBox(height: 8.h),
+                                  Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment:
+                                    CrossAxisAlignment.baseline,
+                                    textBaseline: TextBaseline.alphabetic,
+                                    children: [
+                                      Text(
+                                        '${widget.firstInningsRuns}',
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 48.sp,
+                                          fontWeight: FontWeight.w900,
+                                        ),
+                                      ),
+                                      Text(
+                                        '/${widget.firstInningsWickets}',
+                                        style: TextStyle(
+                                          color: _C.accent,
+                                          fontSize: 48.sp,
+                                          fontWeight: FontWeight.w900,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  SizedBox(height: 16.h),
+                                  Container(
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: 18.w,
+                                      vertical: 10.h,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: _C.gold.withOpacity(0.08),
+                                      borderRadius: BorderRadius.circular(
+                                        12.r,
+                                      ),
+                                      border: Border.all(
+                                        color: _C.gold.withOpacity(0.25),
+                                      ),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          Icons.flag_rounded,
+                                          color: _C.gold,
+                                          size: 16.sp,
+                                        ),
+                                        SizedBox(width: 8.w),
+                                        Text(
+                                          'Target: $target runs to win',
+                                          style: TextStyle(
+                                            color: _C.gold,
+                                            fontSize: 15.sp,
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            SizedBox(height: 24.h),
+                            _CardShell(
+                              padding: EdgeInsets.all(24.w),
+                              child: Row(
+                                crossAxisAlignment:
+                                CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                      children: [
+                                        _fiLabel('BATTING', _C.orange),
+                                        SizedBox(height: 8.h),
+                                        _fiHeader([
+                                          'Batter',
+                                          'R',
+                                          'B',
+                                          '4s',
+                                          '6s',
+                                          'SR',
+                                        ]),
+                                        Divider(
+                                          color: Colors.white12,
+                                          height: 8.h,
+                                        ),
+                                        if (_batsmen.isEmpty)
+                                          Padding(
+                                            padding:
+                                            EdgeInsets.symmetric(
+                                              vertical: 12.h,
+                                            ),
+                                            child: Text(
+                                              'No batting data available',
+                                              style: TextStyle(
+                                                color: Colors.white
+                                                    .withOpacity(0.35),
+                                                fontSize: 13.sp,
+                                              ),
+                                            ),
+                                          )
+                                        else
+                                          ...(_batsmen..sort(
+                                                (a, b) =>
+                                                ((b['runs'] ?? 0)
+                                                as num)
+                                                    .compareTo(
+                                                  (a['runs'] ?? 0)
+                                                  as num,
+                                                ),
+                                          ))
+                                              .map(_fiBatsmanRow),
+                                      ],
+                                    ),
+                                  ),
+                                  SizedBox(width: 32.w),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                      children: [
+                                        _fiLabel('BOWLING', _C.accent),
+                                        SizedBox(height: 8.h),
+                                        _fiHeader([
+                                          'Bowler',
+                                          'O',
+                                          'R',
+                                          'W',
+                                          'Eco',
+                                        ]),
+                                        Divider(
+                                          color: Colors.white12,
+                                          height: 8.h,
+                                        ),
+                                        if (_bowlers.isEmpty)
+                                          Padding(
+                                            padding:
+                                            EdgeInsets.symmetric(
+                                              vertical: 12.h,
+                                            ),
+                                            child: Text(
+                                              'No bowling data available',
+                                              style: TextStyle(
+                                                color: Colors.white
+                                                    .withOpacity(0.35),
+                                                fontSize: 13.sp,
+                                              ),
+                                            ),
+                                          )
+                                        else
+                                          ...(_bowlers..sort(
+                                                (a, b) =>
+                                                ((b['wickets'] ?? 0)
+                                                as num)
+                                                    .compareTo(
+                                                  (a['wickets'] ??
+                                                      0)
+                                                  as num,
+                                                ),
+                                          ))
+                                              .map(_fiBowlerRow),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -1662,33 +1764,33 @@ class _FirstInningsSummaryScreenState
   Widget _fiLabel(String text, Color color) => Row(
     children: [
       Container(
-        width: 3,
-        height: 16,
+        width: 3.w,
+        height: 16.h,
         color: color,
-        margin: const EdgeInsets.only(right: 8),
+        margin: EdgeInsets.only(right: 8.w),
       ),
       Text(
         text,
         style: TextStyle(
           color: color,
-          fontSize: 12,
+          fontSize: 12.sp,
           fontWeight: FontWeight.w800,
-          letterSpacing: 1.2,
+          letterSpacing: 1.2.sp,
         ),
       ),
     ],
   );
 
   Widget _fiHeader(List<String> cols) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 4),
+    padding: EdgeInsets.symmetric(vertical: 4.h),
     child: Row(
       children: [
         Expanded(
           child: Text(
             cols[0],
-            style: const TextStyle(
+            style: TextStyle(
               color: Colors.white38,
-              fontSize: 11,
+              fontSize: 11.sp,
               fontWeight: FontWeight.w700,
             ),
           ),
@@ -1697,13 +1799,13 @@ class _FirstInningsSummaryScreenState
             .skip(1)
             .map(
               (c) => SizedBox(
-            width: 42,
+            width: 42.w,
             child: Text(
               c,
               textAlign: TextAlign.center,
-              style: const TextStyle(
+              style: TextStyle(
                 color: Colors.white38,
-                fontSize: 11,
+                fontSize: 11.sp,
                 fontWeight: FontWeight.w700,
               ),
             ),
@@ -1722,7 +1824,7 @@ class _FirstInningsSummaryScreenState
     final sr = balls > 0 ? ((runs / balls) * 100).toStringAsFixed(1) : '0.0';
     final isOut = b['isOut'] == true;
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: EdgeInsets.symmetric(vertical: 8.h),
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: Colors.white10, width: 0.5)),
       ),
@@ -1733,7 +1835,7 @@ class _FirstInningsSummaryScreenState
               name.length > 16 ? '${name.substring(0, 16)}…' : name,
               style: TextStyle(
                 color: isOut ? Colors.white54 : Colors.white70,
-                fontSize: 13,
+                fontSize: 13.sp,
               ),
             ),
           ),
@@ -1754,7 +1856,7 @@ class _FirstInningsSummaryScreenState
     final wkts = (b['wickets'] ?? 0) as num;
     final eco = (b['economy'] ?? 0) as num;
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: EdgeInsets.symmetric(vertical: 8.h),
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: Colors.white10, width: 0.5)),
       ),
@@ -1763,7 +1865,7 @@ class _FirstInningsSummaryScreenState
           Expanded(
             child: Text(
               name.length > 16 ? '${name.substring(0, 16)}…' : name,
-              style: const TextStyle(color: Colors.white70, fontSize: 13),
+              style: TextStyle(color: Colors.white70, fontSize: 13.sp),
             ),
           ),
           _fiCell('$overs'),
@@ -1780,13 +1882,13 @@ class _FirstInningsSummaryScreenState
   }
 
   Widget _fiCell(String t, {bool bold = false, Color? color}) => SizedBox(
-    width: 42,
+    width: 42.w,
     child: Text(
       t,
       textAlign: TextAlign.center,
       style: TextStyle(
         color: color ?? Colors.white60,
-        fontSize: 13,
+        fontSize: 13.sp,
         fontWeight: bold ? FontWeight.w800 : FontWeight.w500,
       ),
     ),
@@ -1794,48 +1896,37 @@ class _FirstInningsSummaryScreenState
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SHARED CARD SHELL — enhanced glassmorphism. Accepts an optional `scale`
-// (default 1.0) so LiveScoreScreen can render it TV-responsively while every
-// other caller (e.g. _MatchSummaryScreen) keeps its exact original look.
+// SHARED CARD SHELL — glassmorphism, sized via flutter_screenutil.
 // ═══════════════════════════════════════════════════════════════════════════════
 class _CardShell extends StatelessWidget {
   final Widget child;
-  final EdgeInsetsGeometry padding;
-  final double scale;
-  const _CardShell({
-    required this.child,
-    this.padding = const EdgeInsets.all(24),
-    this.scale = 1.0,
-  });
+  final EdgeInsetsGeometry? padding;
+  const _CardShell({required this.child, this.padding});
 
   @override
   Widget build(BuildContext context) {
-    final double s = scale;
     return ClipRRect(
-      borderRadius: BorderRadius.circular(20 * s),
+      borderRadius: BorderRadius.circular(24.r),
       child: BackdropFilter(
-        filter: ImageFilter.blur(
-          sigmaX: 24 * s,
-          sigmaY: 24 * s,
-        ), // stronger blur (was 16)
+        filter: ImageFilter.blur(sigmaX: 24.r, sigmaY: 24.r),
         child: Container(
-          padding: padding,
+          padding: padding ?? EdgeInsets.all(32.w),
           decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
               colors: [
-                Colors.white.withOpacity(0.06), // glassy top-left highlight
-                _C.card.withOpacity(0.50), // lower fill opacity (was 0.72)
+                Colors.white.withOpacity(0.06),
+                _C.card.withOpacity(0.50),
               ],
             ),
-            borderRadius: BorderRadius.circular(20 * s),
+            borderRadius: BorderRadius.circular(24.r),
             border: Border.all(color: Colors.white.withOpacity(0.10)),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withOpacity(0.25),
-                blurRadius: 20 * s,
-                offset: Offset(0, 8 * s),
+                blurRadius: 24.r,
+                offset: Offset(0, 10.h),
               ),
             ],
           ),
@@ -1847,29 +1938,26 @@ class _CardShell extends StatelessWidget {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// STATIC TEAM BADGE + HEADER (used while data is loading, and inside the score card)
-// Both accept an optional `scale` (default 1.0), scaled only from LiveScoreScreen.
+// STATIC TEAM BADGE + HEADER
 // ═══════════════════════════════════════════════════════════════════════════════
 class _TeamBadge extends StatelessWidget {
   final String name;
-  final double scale;
-  const _TeamBadge({required this.name, this.scale = 1.0});
+  const _TeamBadge({required this.name});
 
   @override
   Widget build(BuildContext context) {
-    final double s = scale;
     final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          width: 32 * s,
-          height: 32 * s,
+          width: 46.r,
+          height: 46.r,
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(9 * s),
+            borderRadius: BorderRadius.circular(13.r),
             gradient: const LinearGradient(colors: [_C.accent, _C.accentDim]),
             boxShadow: [
-              BoxShadow(color: _C.accent.withOpacity(0.3), blurRadius: 10 * s),
+              BoxShadow(color: _C.accent.withOpacity(0.3), blurRadius: 12.r),
             ],
           ),
           child: Center(
@@ -1877,20 +1965,20 @@ class _TeamBadge extends StatelessWidget {
               initial,
               style: TextStyle(
                 color: Colors.white,
-                fontSize: 14 * s,
+                fontSize: 20.sp,
                 fontWeight: FontWeight.w900,
               ),
             ),
           ),
         ),
-        SizedBox(width: 12 * s),
+        SizedBox(width: 16.w),
         Text(
           name.toUpperCase(),
           style: TextStyle(
             color: Colors.white,
-            fontSize: 26 * s,
+            fontSize: 36.sp,
             fontWeight: FontWeight.w900,
-            letterSpacing: 0.5 * s,
+            letterSpacing: 0.5.sp,
           ),
         ),
       ],
@@ -1900,33 +1988,29 @@ class _TeamBadge extends StatelessWidget {
 
 class _TeamsHeaderStatic extends StatelessWidget {
   final String team1Name, team2Name;
-  final double scale;
   const _TeamsHeaderStatic({
     required this.team1Name,
     required this.team2Name,
-    this.scale = 1.0,
   });
 
   @override
   Widget build(BuildContext context) {
-    final double s = scale;
     return _CardShell(
-      scale: s,
-      padding: EdgeInsets.symmetric(horizontal: 28 * s, vertical: 22 * s),
+      padding: EdgeInsets.symmetric(horizontal: 36.w, vertical: 28.h),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          _TeamBadge(name: team1Name, scale: s),
+          _TeamBadge(name: team1Name),
           Text(
             'VS',
             style: TextStyle(
               color: Colors.white.withOpacity(0.3),
-              fontSize: 13 * s,
+              fontSize: 18.sp,
               fontWeight: FontWeight.w800,
-              letterSpacing: 2 * s,
+              letterSpacing: 2.5.sp,
             ),
           ),
-          _TeamBadge(name: team2Name, scale: s),
+          _TeamBadge(name: team2Name),
         ],
       ),
     );
@@ -1936,20 +2020,13 @@ class _TeamsHeaderStatic extends StatelessWidget {
 class _StatusCard extends StatelessWidget {
   final String label;
   final bool isError;
-  final double scale;
-  const _StatusCard({
-    required this.label,
-    required this.isError,
-    this.scale = 1.0,
-  });
+  const _StatusCard({required this.label, required this.isError});
 
   @override
   Widget build(BuildContext context) {
-    final double s = scale;
     final color = isError ? _C.danger : _C.accent;
     return _CardShell(
-      scale: s,
-      padding: EdgeInsets.symmetric(horizontal: 24 * s, vertical: 28 * s),
+      padding: EdgeInsets.symmetric(horizontal: 28.w, vertical: 36.h),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
@@ -1957,23 +2034,23 @@ class _StatusCard extends StatelessWidget {
             Icon(
               Icons.error_outline_rounded,
               color: color.withOpacity(0.8),
-              size: 18 * s,
+              size: 24.sp,
             )
           else
             SizedBox(
-              width: 16 * s,
-              height: 16 * s,
+              width: 20.r,
+              height: 20.r,
               child: CircularProgressIndicator(
-                strokeWidth: 2 * s,
+                strokeWidth: 2.5.r,
                 color: color,
               ),
             ),
-          SizedBox(width: 14 * s),
+          SizedBox(width: 16.w),
           Text(
             label,
             style: TextStyle(
               color: color.withOpacity(0.75),
-              fontSize: 14 * s,
+              fontSize: 18.sp,
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -1984,9 +2061,7 @@ class _StatusCard extends StatelessWidget {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// BROADCAST BOTTOM PANEL — business logic UNCHANGED, visuals TV-scaled below.
-// This widget is only ever used inside LiveScoreScreen, so it computes its own
-// scale factor via _tvScale(context) and does not affect any other screen.
+// BROADCAST BOTTOM PANEL — business logic UNCHANGED, visuals via ScreenUtil.
 // ═══════════════════════════════════════════════════════════════════════════════
 class _BroadcastBottomPanel extends StatefulWidget {
   final String tournamentId;
@@ -2107,15 +2182,6 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
         }
         final allBatsmen = _cachedBatsmen;
 
-        // ── Score calculations ──────────────────────────────────────
-        // Per the CRICTRAX Firestore schema, the innings document
-        // already stores the official totalRuns / totalWickets / balls
-        // (these correctly include extras — wides, no-balls, byes, and
-        // leg-byes — which a sum of batsmen data alone cannot capture).
-        // We read those fields first and only fall back to summing the
-        // batsmen/ballsFaced subcollection data when the innings
-        // document doesn't have them yet, so nothing breaks for older
-        // or partially-written documents. ─────────────────────────────
         final calculatedRuns = allBatsmen.fold<int>(
           0,
               (s, b) => s + ((b['runs'] ?? 0) as num).toInt(),
@@ -2133,10 +2199,6 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
             (widget.innData['totalWickets'] as num?)?.toInt() ??
                 calculatedWickets;
 
-        // `balls` on the innings document is the authoritative ball
-        // count (kept correct across wides/no-balls/byes/leg-byes by
-        // the scoring logic that writes it). Fall back to the summed
-        // ballsFaced from batsmen only if it's missing.
         final totalBalls =
             (widget.innData['balls'] as num?)?.toInt() ??
                 calculatedBallsFromBatsmen;
@@ -2146,12 +2208,6 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
         final currentOverNumber = (ballsInOver == 0 && totalBalls > 0)
             ? completedOvers - 1
             : completedOvers;
-        // Prefer the official `overs` string stored on the innings
-        // document (e.g. "12.3") — it is written by the scoring engine
-        // and correctly reflects overs bowled including how extras
-        // affect the ball count. Fall back to the locally computed
-        // completedOvers.ballsInOver, then to the legacy totalOvers
-        // placeholder used before a ball has been bowled.
         final oversDisplay = widget.innData['overs'] != null
             ? '${widget.innData['overs']}'
             : (widget.innData['totalOvers'] != null && totalBalls == 0
@@ -2162,11 +2218,6 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
             .where((b) => b['isOut'] != true)
             .toList();
 
-        // Target / required run calc (2nd innings). The innings
-        // document stores targetRuns / runsNeeded / ballsRemaining
-        // directly once a chase is in progress — use those first and
-        // only derive them locally (as before) when they aren't present
-        // yet, e.g. right at the start of the 2nd innings.
         final target = (widget.innData['targetRuns'] as num?)?.toInt() ??
             (widget.firstInningsTotal != null
                 ? widget.firstInningsTotal! + 1
@@ -2196,21 +2247,18 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
                   .map((d) => d.data() as Map<String, dynamic>)
                   .toList();
 
-              // Helper: safely parse overs to double
               double parseOvers(dynamic raw) {
                 if (raw == null) return 0.0;
                 if (raw is num) return raw.toDouble();
                 return double.tryParse(raw.toString()) ?? 0.0;
               }
 
-              // Helper: true if bowler is mid-over
               bool isMidOver(Map<String, dynamic> b) {
                 final ov = parseOvers(b['overs']);
                 final ballsDigit = (ov * 10).round() % 10;
                 return ballsDigit > 0;
               }
 
-              // PRIORITY 1: bowler currently mid-over
               final midOverBowlers = bowlers.where(isMidOver).toList();
 
               if (midOverBowlers.isNotEmpty) {
@@ -2227,7 +2275,6 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
                 });
                 _cachedBowler = midOverBowlers.first;
               } else {
-                // PRIORITY 2: isBowling flag
                 final flaggedBowlers = bowlers
                     .where((b) => b['isBowling'] == true)
                     .toList();
@@ -2243,7 +2290,6 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
                   });
                   _cachedBowler = flaggedBowlers.first;
                 } else {
-                  // PRIORITY 3: most recently updated bowler
                   final withTimestamp = bowlers
                       .where((b) => b['lastUpdated'] is Timestamp)
                       .toList();
@@ -2255,25 +2301,16 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
                     );
                     _cachedBowler = withTimestamp.first;
                   } else {
-                    // PRIORITY 4: last document as final fallback
                     _cachedBowler = bowlers.last;
                   }
                 }
               }
             }
             final bowler = _cachedBowler;
-            // NOTE: `currentRunRate` is NOT part of the documented
-            // Innings Document schema (only the per-ball `scores`
-            // subcollection document has it), so per Task 3 this
-            // calculation is left exactly as it was — it is not backed
-            // by a verified innings-level Firestore field.
             final crr = totalBalls > 0
                 ? (totalRuns / totalBalls) * 6
                 : (widget.innData['currentRunRate'] ?? 0.0);
 
-            // Required Run Rate — the innings document does store
-            // `requiredRunRate` directly, so prefer it and only fall
-            // back to the local derivation when it isn't present.
             double? rrr;
             if (widget.innData['requiredRunRate'] != null) {
               rrr = (widget.innData['requiredRunRate'] as num).toDouble();
@@ -2307,7 +2344,7 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
     );
   }
 
-  // ── Redesigned visual layer (TV-scaled) ─────────────────────────────────────
+  // ── Visual layer, ScreenUtil-scaled ─────────────────────────────────────────
   Widget _buildBroadcastPanel({
     required BuildContext context,
     required String battingTeamName,
@@ -2326,7 +2363,6 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
     required String? oversRemaining,
     required int currentOverNumber,
   }) {
-    final double s = _tvScale(context);
     final crrStr = crr is double
         ? crr.toStringAsFixed(2)
         : double.tryParse(crr.toString())?.toStringAsFixed(2) ?? '0.00';
@@ -2336,27 +2372,26 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
       children: [
         // ── HEADER CARD: teams + big score + overs/CRR pill ──────────────
         _CardShell(
-          scale: s,
-          padding: EdgeInsets.fromLTRB(28 * s, 24 * s, 28 * s, 26 * s),
+          padding: EdgeInsets.fromLTRB(38.w, 32.h, 38.w, 34.h),
           child: Column(
             children: [
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  _TeamBadge(name: widget.team1Name, scale: s),
+                  _TeamBadge(name: widget.team1Name),
                   Text(
                     'VS',
                     style: TextStyle(
                       color: Colors.white.withOpacity(0.3),
-                      fontSize: 13 * s,
+                      fontSize: 18.sp,
                       fontWeight: FontWeight.w800,
-                      letterSpacing: 2 * s,
+                      letterSpacing: 2.5.sp,
                     ),
                   ),
-                  _TeamBadge(name: widget.team2Name, scale: s),
+                  _TeamBadge(name: widget.team2Name),
                 ],
               ),
-              SizedBox(height: 18 * s),
+              SizedBox(height: 24.h),
               Center(
                 child: RichText(
                   text: TextSpan(
@@ -2365,35 +2400,35 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
                         text: '$totalRuns',
                         style: TextStyle(
                           color: Colors.white,
-                          fontSize: 64 * s,
+                          fontSize: 88.sp,
                           fontWeight: FontWeight.w900,
                           height: 1,
-                          letterSpacing: -1.5 * s,
+                          letterSpacing: -2.sp,
                         ),
                       ),
                       TextSpan(
                         text: '/$totalWickets',
                         style: TextStyle(
                           color: _C.accent,
-                          fontSize: 64 * s,
+                          fontSize: 88.sp,
                           fontWeight: FontWeight.w900,
                           height: 1,
-                          letterSpacing: -1.5 * s,
+                          letterSpacing: -2.sp,
                         ),
                       ),
                     ],
                   ),
                 ),
               ),
-              SizedBox(height: 14 * s),
+              SizedBox(height: 20.h),
               Container(
                 padding: EdgeInsets.symmetric(
-                  horizontal: 20 * s,
-                  vertical: 9 * s,
+                  horizontal: 26.w,
+                  vertical: 12.h,
                 ),
                 decoration: BoxDecoration(
                   color: Colors.white.withOpacity(0.04),
-                  borderRadius: BorderRadius.circular(30 * s),
+                  borderRadius: BorderRadius.circular(36.r),
                   border: Border.all(color: Colors.white.withOpacity(0.08)),
                 ),
                 child: Row(
@@ -2403,45 +2438,45 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
                       '$oversDisplay',
                       style: TextStyle(
                         color: _C.accent,
-                        fontSize: 15 * s,
+                        fontSize: 20.sp,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
-                    SizedBox(width: 6 * s),
+                    SizedBox(width: 8.w),
                     Text(
                       'OVERS',
                       style: TextStyle(
                         color: Colors.white.withOpacity(0.35),
-                        fontSize: 11 * s,
+                        fontSize: 14.sp,
                         fontWeight: FontWeight.w700,
-                        letterSpacing: 1 * s,
+                        letterSpacing: 1.2.sp,
                       ),
                     ),
-                    SizedBox(width: 12 * s),
+                    SizedBox(width: 16.w),
                     Container(
-                      width: 4 * s,
-                      height: 4 * s,
+                      width: 5.r,
+                      height: 5.r,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         color: _C.accent.withOpacity(0.6),
                       ),
                     ),
-                    SizedBox(width: 12 * s),
+                    SizedBox(width: 16.w),
                     Text(
                       'CRR:',
                       style: TextStyle(
                         color: Colors.white.withOpacity(0.35),
-                        fontSize: 11 * s,
+                        fontSize: 14.sp,
                         fontWeight: FontWeight.w700,
-                        letterSpacing: 1 * s,
+                        letterSpacing: 1.2.sp,
                       ),
                     ),
-                    SizedBox(width: 6 * s),
+                    SizedBox(width: 8.w),
                     Text(
                       crrStr,
                       style: TextStyle(
                         color: Colors.white,
-                        fontSize: 15 * s,
+                        fontSize: 20.sp,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
@@ -2449,7 +2484,7 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
                 ),
               ),
               if (target != null && runsNeeded != null) ...[
-                SizedBox(height: 16 * s),
+                SizedBox(height: 20.h),
                 _TargetInfoBar(
                   target: target,
                   runsNeeded: runsNeeded,
@@ -2463,7 +2498,7 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
           ),
         ),
 
-        SizedBox(height: 18 * s),
+        SizedBox(height: 24.h),
 
         // ── BATSMAN / BOWLER CARDS ────────────────────────────────────────
         Row(
@@ -2475,19 +2510,18 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
                 batters: activeBatsmen,
               ),
             ),
-            SizedBox(width: 18 * s),
+            SizedBox(width: 24.w),
             Expanded(
               child: _BowlerCard(bowlingTeamName: opponentName, bowler: bowler),
             ),
           ],
         ),
 
-        SizedBox(height: 18 * s),
+        SizedBox(height: 24.h),
 
         // ── RECENT BALLS ──────────────────────────────────────────────────
         _CardShell(
-          scale: s,
-          padding: EdgeInsets.symmetric(horizontal: 22 * s, vertical: 16 * s),
+          padding: EdgeInsets.symmetric(horizontal: 28.w, vertical: 22.h),
           child: _BallByBallTracker(
             tournamentId: widget.tournamentId,
             matchId: widget.matchId,
@@ -2497,11 +2531,11 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
           ),
         ),
 
-        SizedBox(height: 22 * s),
+        SizedBox(height: 28.h),
 
-        // ── FULL SCORECARD BUTTON ────────────────────────────────────────
+        // ── FULL SCORECARD BUTTON (D-pad focusable) ────────────────────────
         Center(
-          child: GestureDetector(
+          child: _DpadFocusable(
             onTap: () {
               Navigator.of(context).push(
                 MaterialPageRoute(
@@ -2516,19 +2550,25 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
                 ),
               );
             },
-            child: Container(
+            builder: (context, focused) => AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
               padding: EdgeInsets.symmetric(
-                horizontal: 26 * s,
-                vertical: 14 * s,
+                horizontal: 34.w,
+                vertical: 18.h,
               ),
               decoration: BoxDecoration(
-                color: _C.accent.withOpacity(0.06),
-                borderRadius: BorderRadius.circular(30 * s),
-                border: Border.all(color: _C.accent.withOpacity(0.55)),
+                color: focused
+                    ? _C.accent.withOpacity(0.16)
+                    : _C.accent.withOpacity(0.06),
+                borderRadius: BorderRadius.circular(36.r),
+                border: Border.all(
+                  color: _C.accent.withOpacity(focused ? 1 : 0.55),
+                  width: focused ? 2.5 : 1.5,
+                ),
                 boxShadow: [
                   BoxShadow(
-                    color: _C.accent.withOpacity(0.18),
-                    blurRadius: 18 * s,
+                    color: _C.accent.withOpacity(focused ? 0.35 : 0.18),
+                    blurRadius: focused ? 30.r : 22.r,
                   ),
                 ],
               ),
@@ -2538,16 +2578,16 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
                   Icon(
                     Icons.assignment_outlined,
                     color: _C.accent,
-                    size: 16 * s,
+                    size: 22.sp,
                   ),
-                  SizedBox(width: 10 * s),
+                  SizedBox(width: 12.w),
                   Text(
                     'FULL SCORECARD',
                     style: TextStyle(
                       color: _C.accent,
-                      fontSize: 13 * s,
+                      fontSize: 17.sp,
                       fontWeight: FontWeight.w800,
-                      letterSpacing: 1 * s,
+                      letterSpacing: 1.2.sp,
                     ),
                   ),
                 ],
@@ -2556,9 +2596,9 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
           ),
         ),
 
-        SizedBox(height: 18 * s),
+        SizedBox(height: 24.h),
 
-        // ── SPONSORED BANNER (now a rotating 3-ad carousel, 30s interval) ──
+        // ── SPONSORED BANNER ─────────────────────────────────────────────
         const _SponsoredBanner(),
       ],
     );
@@ -2566,8 +2606,7 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// TARGET INFO BAR — chase situation banner (restyled pill), TV-scaled.
-// Used only inside LiveScoreScreen; computes its own scale via context.
+// TARGET INFO BAR
 // ═══════════════════════════════════════════════════════════════════════════════
 class _TargetInfoBar extends StatelessWidget {
   final int target, runsNeeded;
@@ -2587,7 +2626,6 @@ class _TargetInfoBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final double s = _tvScale(context);
     final isClose =
         ballsRemaining != null && runsNeeded <= ballsRemaining! ~/ 2;
     final urgentColor = isClose ? _C.gold : _C.accent;
@@ -2595,30 +2633,30 @@ class _TargetInfoBar extends StatelessWidget {
     return AnimatedBuilder(
       animation: pulseAnim,
       builder: (_, __) => Container(
-        padding: EdgeInsets.symmetric(horizontal: 18 * s, vertical: 10 * s),
+        padding: EdgeInsets.symmetric(horizontal: 24.w, vertical: 14.h),
         decoration: BoxDecoration(
           color: urgentColor.withOpacity(0.07),
-          borderRadius: BorderRadius.circular(14 * s),
+          borderRadius: BorderRadius.circular(18.r),
           border: Border.all(color: urgentColor.withOpacity(0.25)),
         ),
         child: Wrap(
           alignment: WrapAlignment.center,
           crossAxisAlignment: WrapCrossAlignment.center,
-          spacing: 18 * s,
-          runSpacing: 6 * s,
+          spacing: 24.w,
+          runSpacing: 8.h,
           children: [
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.flag_rounded, color: urgentColor, size: 13 * s),
-                SizedBox(width: 6 * s),
+                Icon(Icons.flag_rounded, color: urgentColor, size: 18.sp),
+                SizedBox(width: 8.w),
                 Text(
                   'TARGET $target',
                   style: TextStyle(
                     color: urgentColor,
-                    fontSize: 12 * s,
+                    fontSize: 16.sp,
                     fontWeight: FontWeight.w900,
-                    letterSpacing: 1 * s,
+                    letterSpacing: 1.2.sp,
                   ),
                 ),
               ],
@@ -2654,7 +2692,6 @@ class _TargetStat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final double s = _tvScale(context);
     return Row(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.baseline,
@@ -2664,16 +2701,16 @@ class _TargetStat extends StatelessWidget {
           '$label  ',
           style: TextStyle(
             color: Colors.white.withOpacity(0.3),
-            fontSize: 9 * s,
+            fontSize: 12.sp,
             fontWeight: FontWeight.w700,
-            letterSpacing: 1 * s,
+            letterSpacing: 1.2.sp,
           ),
         ),
         Text(
           value,
           style: TextStyle(
             color: color,
-            fontSize: 13 * s,
+            fontSize: 17.sp,
             fontWeight: FontWeight.w800,
           ),
         ),
@@ -2683,8 +2720,7 @@ class _TargetStat extends StatelessWidget {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// BATSMAN CARD — matches reference mock table layout, TV-scaled.
-// Used only inside LiveScoreScreen; computes its own scale via context.
+// BATSMAN CARD
 // ═══════════════════════════════════════════════════════════════════════════════
 class _BatsmenCard extends StatelessWidget {
   final String battingTeamName;
@@ -2693,7 +2729,6 @@ class _BatsmenCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final double s = _tvScale(context);
     final sorted = [...batters]
       ..sort((a, b) {
         final aS = (a['isOnStrike'] == true || a['onStrike'] == true) ? 0 : 1;
@@ -2703,8 +2738,7 @@ class _BatsmenCard extends StatelessWidget {
     final display = sorted.take(2).toList();
 
     return _CardShell(
-      scale: s,
-      padding: EdgeInsets.symmetric(horizontal: 22 * s, vertical: 18 * s),
+      padding: EdgeInsets.symmetric(horizontal: 28.w, vertical: 26.h),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -2714,46 +2748,46 @@ class _BatsmenCard extends StatelessWidget {
                 'BATSMAN',
                 style: TextStyle(
                   color: _C.textDim,
-                  fontSize: 11 * s,
+                  fontSize: 15.sp,
                   fontWeight: FontWeight.w800,
-                  letterSpacing: 1.5 * s,
+                  letterSpacing: 2.sp,
                 ),
               ),
               const Spacer(),
               SizedBox(
-                width: 40 * s,
+                width: 52.w,
                 child: Text(
                   'R',
                   textAlign: TextAlign.right,
                   style: TextStyle(
                     color: _C.textDim,
-                    fontSize: 11 * s,
+                    fontSize: 15.sp,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
               ),
-              SizedBox(width: 12 * s),
+              SizedBox(width: 16.w),
               SizedBox(
-                width: 30 * s,
+                width: 40.w,
                 child: Text(
                   'B',
                   textAlign: TextAlign.right,
                   style: TextStyle(
                     color: _C.textDim,
-                    fontSize: 11 * s,
+                    fontSize: 15.sp,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
               ),
             ],
           ),
-          SizedBox(height: 14 * s),
+          SizedBox(height: 20.h),
           if (display.isEmpty)
             Text(
               'Yet to bat',
               style: TextStyle(
                 color: Colors.white.withOpacity(0.3),
-                fontSize: 13 * s,
+                fontSize: 17.sp,
               ),
             )
           else
@@ -2767,7 +2801,7 @@ class _BatsmenCard extends StatelessWidget {
                   : (name.length > 18 ? '${name.substring(0, 18)}…' : name);
 
               return Padding(
-                padding: EdgeInsets.only(bottom: 12 * s),
+                padding: EdgeInsets.only(bottom: 16.h),
                 child: Row(
                   children: [
                     Expanded(
@@ -2781,7 +2815,7 @@ class _BatsmenCard extends StatelessWidget {
                                 color: Colors.white.withOpacity(
                                   onStrike ? 1 : 0.55,
                                 ),
-                                fontSize: 16 * s,
+                                fontSize: 21.sp,
                                 fontWeight: onStrike
                                     ? FontWeight.w800
                                     : FontWeight.w500,
@@ -2789,37 +2823,37 @@ class _BatsmenCard extends StatelessWidget {
                             ),
                           ),
                           if (onStrike) ...[
-                            SizedBox(width: 5 * s),
+                            SizedBox(width: 7.w),
                             Icon(
                               Icons.star_rounded,
                               color: _C.accent,
-                              size: 15 * s,
+                              size: 20.sp,
                             ),
                           ],
                         ],
                       ),
                     ),
                     SizedBox(
-                      width: 40 * s,
+                      width: 52.w,
                       child: Text(
                         '$runs${onStrike ? '*' : ''}',
                         textAlign: TextAlign.right,
                         style: TextStyle(
                           color: Colors.white,
-                          fontSize: 16 * s,
+                          fontSize: 21.sp,
                           fontWeight: FontWeight.w800,
                         ),
                       ),
                     ),
-                    SizedBox(width: 12 * s),
+                    SizedBox(width: 16.w),
                     SizedBox(
-                      width: 30 * s,
+                      width: 40.w,
                       child: Text(
                         '$balls',
                         textAlign: TextAlign.right,
                         style: TextStyle(
                           color: Colors.white.withOpacity(0.5),
-                          fontSize: 15 * s,
+                          fontSize: 19.sp,
                           fontWeight: FontWeight.w500,
                         ),
                       ),
@@ -2835,8 +2869,7 @@ class _BatsmenCard extends StatelessWidget {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// BOWLER CARD — matches reference mock table layout, TV-scaled.
-// Used only inside LiveScoreScreen; computes its own scale via context.
+// BOWLER CARD
 // ═══════════════════════════════════════════════════════════════════════════════
 class _BowlerCard extends StatelessWidget {
   final String bowlingTeamName;
@@ -2845,7 +2878,6 @@ class _BowlerCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final double s = _tvScale(context);
     final bowlerName = (bowler?['playerName'] ?? bowler?['name'] ?? '')
         .toString();
     final wkts = bowler?['wickets'] ?? 0;
@@ -2859,8 +2891,7 @@ class _BowlerCard extends StatelessWidget {
         : bowlerName);
 
     return _CardShell(
-      scale: s,
-      padding: EdgeInsets.symmetric(horizontal: 22 * s, vertical: 18 * s),
+      padding: EdgeInsets.symmetric(horizontal: 28.w, vertical: 26.h),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -2870,22 +2901,22 @@ class _BowlerCard extends StatelessWidget {
                 'BOWLER',
                 style: TextStyle(
                   color: _C.textDim,
-                  fontSize: 11 * s,
+                  fontSize: 15.sp,
                   fontWeight: FontWeight.w800,
-                  letterSpacing: 1.5 * s,
+                  letterSpacing: 2.sp,
                 ),
               ),
               const Spacer(),
-              _colHeader('O', s),
-              SizedBox(width: 10 * s),
-              _colHeader('M', s),
-              SizedBox(width: 10 * s),
-              _colHeader('R', s),
-              SizedBox(width: 10 * s),
-              _colHeader('W', s),
+              _colHeader('O'),
+              SizedBox(width: 14.w),
+              _colHeader('M'),
+              SizedBox(width: 14.w),
+              _colHeader('R'),
+              SizedBox(width: 14.w),
+              _colHeader('W'),
             ],
           ),
-          SizedBox(height: 14 * s),
+          SizedBox(height: 20.h),
           Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
@@ -2896,25 +2927,25 @@ class _BowlerCard extends StatelessWidget {
                   maxLines: 2,
                   style: TextStyle(
                     color: Colors.white,
-                    fontSize: 16 * s,
+                    fontSize: 21.sp,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
               ),
-              _colVal('$bowlerOvers', s),
-              SizedBox(width: 10 * s),
-              _colVal('$maidens', s),
-              SizedBox(width: 10 * s),
-              _colVal('$runsConceded', s),
-              SizedBox(width: 10 * s),
+              _colVal('$bowlerOvers'),
+              SizedBox(width: 14.w),
+              _colVal('$maidens'),
+              SizedBox(width: 14.w),
+              _colVal('$runsConceded'),
+              SizedBox(width: 14.w),
               SizedBox(
-                width: 26 * s,
+                width: 36.w,
                 child: Text(
                   '$wkts',
                   textAlign: TextAlign.right,
                   style: TextStyle(
                     color: _C.accent,
-                    fontSize: 20 * s,
+                    fontSize: 26.sp,
                     fontWeight: FontWeight.w900,
                   ),
                 ),
@@ -2926,27 +2957,27 @@ class _BowlerCard extends StatelessWidget {
     );
   }
 
-  Widget _colHeader(String t, double s) => SizedBox(
-    width: 26 * s,
+  Widget _colHeader(String t) => SizedBox(
+    width: 36.w,
     child: Text(
       t,
       textAlign: TextAlign.right,
       style: TextStyle(
         color: _C.textDim,
-        fontSize: 11 * s,
+        fontSize: 15.sp,
         fontWeight: FontWeight.w800,
       ),
     ),
   );
 
-  Widget _colVal(String t, double s) => SizedBox(
-    width: 26 * s,
+  Widget _colVal(String t) => SizedBox(
+    width: 36.w,
     child: Text(
       t,
       textAlign: TextAlign.right,
       style: TextStyle(
         color: Colors.white.withOpacity(0.6),
-        fontSize: 15 * s,
+        fontSize: 19.sp,
         fontWeight: FontWeight.w600,
       ),
     ),
@@ -2954,8 +2985,7 @@ class _BowlerCard extends StatelessWidget {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SPONSORED BANNER — rotating carousel of 3 ads, auto-advancing every 30s.
-// Decorative only, TV-scaled. Used only inside LiveScoreScreen.
+// SPONSORED BANNER — decorative carousel, no D-pad interaction needed.
 // ═══════════════════════════════════════════════════════════════════════════════
 class _SponsoredBanner extends StatefulWidget {
   const _SponsoredBanner();
@@ -3022,12 +3052,10 @@ class _SponsoredBannerState extends State<_SponsoredBanner> {
 
   @override
   Widget build(BuildContext context) {
-    final double s = _tvScale(context);
     return _CardShell(
-      scale: s,
-      padding: EdgeInsets.symmetric(horizontal: 20 * s, vertical: 16 * s),
+      padding: EdgeInsets.symmetric(horizontal: 26.w, vertical: 22.h),
       child: SizedBox(
-        height: 62 * s,
+        height: 84.h,
         child: Stack(
           children: [
             PageView.builder(
@@ -3039,18 +3067,18 @@ class _SponsoredBannerState extends State<_SponsoredBanner> {
                 return Row(
                   children: [
                     Container(
-                      padding: EdgeInsets.all(9 * s),
+                      padding: EdgeInsets.all(13.r),
                       decoration: BoxDecoration(
                         color: Colors.white.withOpacity(0.06),
-                        borderRadius: BorderRadius.circular(10 * s),
+                        borderRadius: BorderRadius.circular(13.r),
                       ),
                       child: Icon(
                         _iconFor(ad['icon']!),
                         color: Colors.white.withOpacity(0.5),
-                        size: 18 * s,
+                        size: 24.sp,
                       ),
                     ),
-                    SizedBox(width: 14 * s),
+                    SizedBox(width: 18.w),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3060,33 +3088,33 @@ class _SponsoredBannerState extends State<_SponsoredBanner> {
                             'SPONSORED',
                             style: TextStyle(
                               color: Colors.white.withOpacity(0.28),
-                              fontSize: 9 * s,
+                              fontSize: 12.sp,
                               fontWeight: FontWeight.w800,
-                              letterSpacing: 1.2 * s,
+                              letterSpacing: 1.5.sp,
                             ),
                           ),
-                          SizedBox(height: 3 * s),
+                          SizedBox(height: 4.h),
                           Text(
                             ad['title']!,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               color: Colors.white.withOpacity(0.75),
-                              fontSize: 13 * s,
+                              fontSize: 17.sp,
                               fontWeight: FontWeight.w700,
                             ),
                           ),
                         ],
                       ),
                     ),
-                    SizedBox(width: 12 * s),
+                    SizedBox(width: 16.w),
                     Container(
                       padding: EdgeInsets.symmetric(
-                        horizontal: 16 * s,
-                        vertical: 9 * s,
+                        horizontal: 20.w,
+                        vertical: 12.h,
                       ),
                       decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(20 * s),
+                        borderRadius: BorderRadius.circular(26.r),
                         border: Border.all(
                           color: Colors.white.withOpacity(0.18),
                         ),
@@ -3095,9 +3123,9 @@ class _SponsoredBannerState extends State<_SponsoredBanner> {
                         ad['cta']!,
                         style: TextStyle(
                           color: Colors.white.withOpacity(0.7),
-                          fontSize: 11 * s,
+                          fontSize: 14.sp,
                           fontWeight: FontWeight.w800,
-                          letterSpacing: 0.5 * s,
+                          letterSpacing: 0.6.sp,
                         ),
                       ),
                     ),
@@ -3115,11 +3143,11 @@ class _SponsoredBannerState extends State<_SponsoredBanner> {
                   final active = i == _index;
                   return AnimatedContainer(
                     duration: const Duration(milliseconds: 250),
-                    margin: EdgeInsets.symmetric(horizontal: 3 * s),
-                    width: active ? 14 * s : 5 * s,
-                    height: 5 * s,
+                    margin: EdgeInsets.symmetric(horizontal: 4.w),
+                    width: active ? 18.w : 7.w,
+                    height: 7.h,
                     decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(3 * s),
+                      borderRadius: BorderRadius.circular(4.r),
                       color: active
                           ? _C.accent
                           : Colors.white.withOpacity(0.15),
@@ -3135,6 +3163,9 @@ class _SponsoredBannerState extends State<_SponsoredBanner> {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// INNINGS BREAK OVERLAY
+// ═══════════════════════════════════════════════════════════════════════════════
 class _InningsBreakOverlay extends StatelessWidget {
   final String tournamentId;
   final String matchId;
@@ -3170,26 +3201,24 @@ class _InningsBreakOverlay extends StatelessWidget {
 
     required this.onSummaryViewed,
   });
+
   @override
   Widget build(BuildContext context) {
-    final double s = _tvScale(context);
     return Column(
       children: [
         _TeamsHeaderStatic(
           team1Name: team1Name,
           team2Name: team2Name,
-          scale: s,
         ),
-        SizedBox(height: 20 * s),
+        SizedBox(height: 26.h),
         _CardShell(
-          scale: s,
-          padding: EdgeInsets.symmetric(horizontal: 32 * s, vertical: 40 * s),
+          padding: EdgeInsets.symmetric(horizontal: 40.w, vertical: 50.h),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                width: 64 * s,
-                height: 64 * s,
+                width: 84.r,
+                height: 84.r,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: _C.accent.withOpacity(0.08),
@@ -3197,47 +3226,47 @@ class _InningsBreakOverlay extends StatelessWidget {
                   boxShadow: [
                     BoxShadow(
                       color: _C.accent.withOpacity(0.15),
-                      blurRadius: 20 * s,
+                      blurRadius: 24.r,
                     ),
                   ],
                 ),
                 child: Icon(
                   Icons.sports_cricket,
                   color: _C.accent,
-                  size: 28 * s,
+                  size: 36.sp,
                 ),
               ),
-              SizedBox(height: 20 * s),
+              SizedBox(height: 26.h),
               Text(
                 'INNINGS BREAK',
                 style: TextStyle(
                   color: Colors.white.withOpacity(0.35),
-                  fontSize: 11 * s,
+                  fontSize: 14.sp,
                   fontWeight: FontWeight.w800,
-                  letterSpacing: 4.5 * s,
+                  letterSpacing: 5.sp,
                 ),
               ),
-              SizedBox(height: 8 * s),
+              SizedBox(height: 10.h),
               Text(
                 '2nd Innings Starting Soon',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: Colors.white,
-                  fontSize: 24 * s,
+                  fontSize: 32.sp,
                   fontWeight: FontWeight.w800,
                   height: 1.2,
-                  letterSpacing: -0.5 * s,
+                  letterSpacing: -0.5.sp,
                 ),
               ),
-              SizedBox(height: 24 * s),
+              SizedBox(height: 30.h),
               Container(
                 padding: EdgeInsets.symmetric(
-                  horizontal: 26 * s,
-                  vertical: 16 * s,
+                  horizontal: 34.w,
+                  vertical: 20.h,
                 ),
                 decoration: BoxDecoration(
                   color: _C.orange.withOpacity(0.07),
-                  borderRadius: BorderRadius.circular(14 * s),
+                  borderRadius: BorderRadius.circular(18.r),
                   border: Border.all(color: _C.orange.withOpacity(0.22)),
                 ),
                 child: Column(
@@ -3248,12 +3277,12 @@ class _InningsBreakOverlay extends StatelessWidget {
                           : '1ST INNINGS SCORE',
                       style: TextStyle(
                         color: Colors.white.withOpacity(0.3),
-                        fontSize: 10 * s,
+                        fontSize: 13.sp,
                         fontWeight: FontWeight.w700,
-                        letterSpacing: 2 * s,
+                        letterSpacing: 2.5.sp,
                       ),
                     ),
-                    SizedBox(height: 8 * s),
+                    SizedBox(height: 10.h),
                     Row(
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.baseline,
@@ -3263,7 +3292,7 @@ class _InningsBreakOverlay extends StatelessWidget {
                           '$firstInningsRuns',
                           style: TextStyle(
                             color: _C.orange,
-                            fontSize: 46 * s,
+                            fontSize: 60.sp,
                             fontWeight: FontWeight.w900,
                             height: 1,
                           ),
@@ -3272,7 +3301,7 @@ class _InningsBreakOverlay extends StatelessWidget {
                           '/$firstInningsWickets',
                           style: TextStyle(
                             color: Colors.white.withOpacity(0.65),
-                            fontSize: 26 * s,
+                            fontSize: 34.sp,
                             fontWeight: FontWeight.w700,
                           ),
                         ),
@@ -3281,37 +3310,36 @@ class _InningsBreakOverlay extends StatelessWidget {
                   ],
                 ),
               ),
-              SizedBox(height: 14 * s),
+              SizedBox(height: 18.h),
               Container(
                 padding: EdgeInsets.symmetric(
-                  horizontal: 18 * s,
-                  vertical: 9 * s,
+                  horizontal: 24.w,
+                  vertical: 12.h,
                 ),
                 decoration: BoxDecoration(
                   color: _C.gold.withOpacity(0.07),
-                  borderRadius: BorderRadius.circular(10 * s),
+                  borderRadius: BorderRadius.circular(13.r),
                   border: Border.all(color: _C.gold.withOpacity(0.22)),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.flag_rounded, color: _C.gold, size: 14 * s),
-                    SizedBox(width: 8 * s),
+                    Icon(Icons.flag_rounded, color: _C.gold, size: 18.sp),
+                    SizedBox(width: 10.w),
                     Text(
                       'Target: ${firstInningsRuns + 1} runs',
                       style: TextStyle(
                         color: _C.gold,
-                        fontSize: 15 * s,
+                        fontSize: 19.sp,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
                   ],
                 ),
               ),
-              SizedBox(height: 18 * s),
-              // ── NEW: Full Scorecard button — opens the 1st-innings
-              // summary screen; popping it returns here automatically. ──
-              GestureDetector(
+              SizedBox(height: 22.h),
+              // ── Full Scorecard button — D-pad focusable ──────────────
+              _DpadFocusable(
                 onTap: () async {
                   await Navigator.push(
                     context,
@@ -3331,15 +3359,29 @@ class _InningsBreakOverlay extends StatelessWidget {
                   );
                   onSummaryViewed();
                 },
-                child: Container(
+                builder: (context, focused) => AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
                   padding: EdgeInsets.symmetric(
-                    horizontal: 22 * s,
-                    vertical: 12 * s,
+                    horizontal: 28.w,
+                    vertical: 16.h,
                   ),
                   decoration: BoxDecoration(
-                    color: _C.accent.withOpacity(0.06),
-                    borderRadius: BorderRadius.circular(26 * s),
-                    border: Border.all(color: _C.accent.withOpacity(0.5)),
+                    color: focused
+                        ? _C.accent.withOpacity(0.16)
+                        : _C.accent.withOpacity(0.06),
+                    borderRadius: BorderRadius.circular(32.r),
+                    border: Border.all(
+                      color: _C.accent.withOpacity(focused ? 1 : 0.5),
+                      width: focused ? 2.5 : 1.5,
+                    ),
+                    boxShadow: focused
+                        ? [
+                      BoxShadow(
+                        color: _C.accent.withOpacity(0.4),
+                        blurRadius: 24.r,
+                      ),
+                    ]
+                        : [],
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -3347,44 +3389,44 @@ class _InningsBreakOverlay extends StatelessWidget {
                       Icon(
                         Icons.assignment_outlined,
                         color: _C.accent,
-                        size: 15 * s,
+                        size: 19.sp,
                       ),
-                      SizedBox(width: 8 * s),
+                      SizedBox(width: 10.w),
                       Text(
                         'FULL SCORECARD',
                         style: TextStyle(
                           color: _C.accent,
-                          fontSize: 12 * s,
+                          fontSize: 16.sp,
                           fontWeight: FontWeight.w800,
-                          letterSpacing: 1 * s,
+                          letterSpacing: 1.2.sp,
                         ),
                       ),
                     ],
                   ),
                 ),
               ),
-              SizedBox(height: 24 * s),
+              SizedBox(height: 30.h),
               AnimatedBuilder(
                 animation: pulseAnim,
                 builder: (_, __) => Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     SizedBox(
-                      width: 14 * s,
-                      height: 14 * s,
+                      width: 18.r,
+                      height: 18.r,
                       child: CircularProgressIndicator(
                         color: _C.accent.withOpacity(
                           0.6 + 0.4 * pulseAnim.value,
                         ),
-                        strokeWidth: 2 * s,
+                        strokeWidth: 2.5.r,
                       ),
                     ),
-                    SizedBox(width: 10 * s),
+                    SizedBox(width: 12.w),
                     Text(
                       'Waiting for 2nd innings…',
                       style: TextStyle(
                         color: Colors.white.withOpacity(0.28),
-                        fontSize: 13 * s,
+                        fontSize: 17.sp,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
@@ -3400,7 +3442,7 @@ class _InningsBreakOverlay extends StatelessWidget {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// MATCH ENDED DIALOG — TV-scaled. Used only inside LiveScoreScreen.
+// MATCH ENDED DIALOG
 // ═══════════════════════════════════════════════════════════════════════════════
 class _MatchEndedDialog extends StatelessWidget {
   final String resultText;
@@ -3415,16 +3457,15 @@ class _MatchEndedDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final double s = _tvScale(context);
     return Dialog(
       backgroundColor: Colors.transparent,
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(28 * s),
+        borderRadius: BorderRadius.circular(28.r),
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 24 * s, sigmaY: 24 * s),
+          filter: ImageFilter.blur(sigmaX: 24.r, sigmaY: 24.r),
           child: Container(
-            width: 440 * s,
-            padding: EdgeInsets.symmetric(horizontal: 48 * s, vertical: 52 * s),
+            width: 440.w,
+            padding: EdgeInsets.symmetric(horizontal: 48.w, vertical: 52.h),
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
@@ -3434,166 +3475,193 @@ class _MatchEndedDialog extends StatelessWidget {
                   _C.surface.withOpacity(0.98),
                 ],
               ),
-              borderRadius: BorderRadius.circular(28 * s),
+              borderRadius: BorderRadius.circular(28.r),
               border: Border.all(color: _C.gold.withOpacity(0.28), width: 1.5),
               boxShadow: [
-                BoxShadow(color: _C.gold.withOpacity(0.12), blurRadius: 48 * s),
+                BoxShadow(color: _C.gold.withOpacity(0.12), blurRadius: 48.r),
                 BoxShadow(
                   color: Colors.black.withOpacity(0.55),
-                  blurRadius: 28 * s,
+                  blurRadius: 28.r,
                 ),
               ],
             ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 76 * s,
-                  height: 76 * s,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: RadialGradient(
-                      colors: [
-                        _C.gold.withOpacity(0.18),
-                        _C.gold.withOpacity(0.04),
+            // ── D-pad traversal for this dialog's two actions ──────────
+            child: FocusTraversalGroup(
+              policy: ReadingOrderTraversalPolicy(),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 76.r,
+                    height: 76.r,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: RadialGradient(
+                        colors: [
+                          _C.gold.withOpacity(0.18),
+                          _C.gold.withOpacity(0.04),
+                        ],
+                      ),
+                      border: Border.all(
+                        color: _C.gold.withOpacity(0.35),
+                        width: 1.5,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: _C.gold.withOpacity(0.2),
+                          blurRadius: 24.r,
+                        ),
                       ],
                     ),
-                    border: Border.all(
-                      color: _C.gold.withOpacity(0.35),
-                      width: 1.5,
+                    child: Icon(
+                      Icons.emoji_events_rounded,
+                      color: _C.gold,
+                      size: 36.sp,
                     ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: _C.gold.withOpacity(0.2),
-                        blurRadius: 24 * s,
-                      ),
-                    ],
                   ),
-                  child: Icon(
-                    Icons.emoji_events_rounded,
-                    color: _C.gold,
-                    size: 36 * s,
-                  ),
-                ),
-                SizedBox(height: 24 * s),
-                Text(
-                  'MATCH COMPLETE',
-                  style: TextStyle(
-                    color: _C.gold.withOpacity(0.55),
-                    fontSize: 10 * s,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 4 * s,
-                  ),
-                ),
-                SizedBox(height: 8 * s),
-                Text(
-                  'Match Ended',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 28 * s,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.5 * s,
-                  ),
-                ),
-                SizedBox(height: 18 * s),
-                Container(
-                  width: double.infinity,
-                  padding: EdgeInsets.symmetric(
-                    horizontal: 22 * s,
-                    vertical: 14 * s,
-                  ),
-                  decoration: BoxDecoration(
-                    color: _C.orange.withOpacity(0.08),
-                    borderRadius: BorderRadius.circular(14 * s),
-                    border: Border.all(color: _C.orange.withOpacity(0.25)),
-                  ),
-                  child: Text(
-                    resultText,
+                  SizedBox(height: 24.h),
+                  Text(
+                    'MATCH COMPLETE',
                     style: TextStyle(
-                      color: _C.orange,
-                      fontSize: 16 * s,
-                      fontWeight: FontWeight.w700,
+                      color: _C.gold.withOpacity(0.55),
+                      fontSize: 10.sp,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 4.sp,
                     ),
-                    textAlign: TextAlign.center,
                   ),
-                ),
-                SizedBox(height: 10 * s),
-                Text(
-                  'What would you like to do?',
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.3),
-                    fontSize: 13 * s,
-                  ),
-                ),
-                SizedBox(height: 24 * s),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: onViewSummary,
-                    icon: Icon(Icons.bar_chart, size: 18 * s),
-                    label: Text(
-                      'View Match Summary',
-                      style: TextStyle(fontSize: 15 * s),
+                  SizedBox(height: 8.h),
+                  Text(
+                    'Match Ended',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 28.sp,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.5.sp,
                     ),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: _C.purple,
-                      side: BorderSide(color: _C.purple, width: 1.5),
-                      padding: EdgeInsets.symmetric(vertical: 16 * s),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14 * s),
+                  ),
+                  SizedBox(height: 18.h),
+                  Container(
+                    width: double.infinity,
+                    padding: EdgeInsets.symmetric(
+                      horizontal: 22.w,
+                      vertical: 14.h,
+                    ),
+                    decoration: BoxDecoration(
+                      color: _C.orange.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(14.r),
+                      border: Border.all(color: _C.orange.withOpacity(0.25)),
+                    ),
+                    child: Text(
+                      resultText,
+                      style: TextStyle(
+                        color: _C.orange,
+                        fontSize: 16.sp,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                  SizedBox(height: 10.h),
+                  Text(
+                    'What would you like to do?',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.3),
+                      fontSize: 13.sp,
+                    ),
+                  ),
+                  SizedBox(height: 24.h),
+                  SizedBox(
+                    width: double.infinity,
+                    child: _DpadFocusable(
+                      onTap: onViewSummary,
+                      builder: (context, focused) => AnimatedContainer(
+                        duration: const Duration(milliseconds: 150),
+                        padding: EdgeInsets.symmetric(vertical: 16.h),
+                        decoration: BoxDecoration(
+                          color: focused
+                              ? _C.purple.withOpacity(0.14)
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(14.r),
+                          border: Border.all(
+                            color: _C.purple,
+                            width: focused ? 2.5 : 1.5,
+                          ),
+                          boxShadow: focused
+                              ? [
+                            BoxShadow(
+                              color: _C.purple.withOpacity(0.4),
+                              blurRadius: 18.r,
+                            ),
+                          ]
+                              : [],
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.bar_chart, color: _C.purple, size: 18.sp),
+                            SizedBox(width: 8.w),
+                            Text(
+                              'View Match Summary',
+                              style: TextStyle(
+                                color: _C.purple,
+                                fontSize: 15.sp,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
-                ),
-                SizedBox(height: 10 * s),
-                SizedBox(
-                  width: double.infinity,
-                  child: Focus(
-                    child: Builder(
-                      builder: (ctx) {
-                        final focused = Focus.of(ctx).hasFocus;
-                        return GestureDetector(
-                          onTap: onBack,
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 150),
-                            padding: EdgeInsets.symmetric(vertical: 16 * s),
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: focused
-                                    ? [_C.accent, _C.accentDim]
-                                    : [
-                                  _C.accent.withOpacity(0.85),
-                                  _C.accentDim.withOpacity(0.85),
-                                ],
-                              ),
-                              borderRadius: BorderRadius.circular(14 * s),
-                              boxShadow: focused
-                                  ? [
-                                BoxShadow(
-                                  color: _C.accent.withOpacity(0.4),
-                                  blurRadius: 20 * s,
-                                ),
-                              ]
-                                  : [],
+                  SizedBox(height: 10.h),
+                  SizedBox(
+                    width: double.infinity,
+                    child: _DpadFocusable(
+                      onTap: onBack,
+                      builder: (context, focused) => AnimatedContainer(
+                        duration: const Duration(milliseconds: 150),
+                        padding: EdgeInsets.symmetric(vertical: 16.h),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: focused
+                                ? [_C.accent, _C.accentDim]
+                                : [
+                              _C.accent.withOpacity(0.85),
+                              _C.accentDim.withOpacity(0.85),
+                            ],
+                          ),
+                          borderRadius: BorderRadius.circular(14.r),
+                          border: focused
+                              ? Border.all(
+                            color: Colors.white.withOpacity(0.5),
+                            width: 2,
+                          )
+                              : null,
+                          boxShadow: focused
+                              ? [
+                            BoxShadow(
+                              color: _C.accent.withOpacity(0.4),
+                              blurRadius: 20.r,
                             ),
-                            child: Center(
-                              child: Text(
-                                'Back to Tournament',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 15 * s,
-                                  fontWeight: FontWeight.w700,
-                                  letterSpacing: 0.3 * s,
-                                ),
-                              ),
+                          ]
+                              : [],
+                        ),
+                        child: Center(
+                          child: Text(
+                            'Back to Tournament',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 15.sp,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.3.sp,
                             ),
                           ),
-                        );
-                      },
+                        ),
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -3603,21 +3671,20 @@ class _MatchEndedDialog extends StatelessWidget {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// FORCED LOGOUT DIALOG — TV-scaled. Used only inside LiveScoreScreen.
+// FORCED LOGOUT DIALOG — no interactive controls, auto-navigates.
 // ═══════════════════════════════════════════════════════════════════════════════
 class _PremiumForcedLogoutDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    final double s = _tvScale(context);
     return Dialog(
       backgroundColor: Colors.transparent,
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(28 * s),
+        borderRadius: BorderRadius.circular(28.r),
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 24 * s, sigmaY: 24 * s),
+          filter: ImageFilter.blur(sigmaX: 24.r, sigmaY: 24.r),
           child: Container(
-            width: 400 * s,
-            padding: EdgeInsets.symmetric(horizontal: 48 * s, vertical: 52 * s),
+            width: 400.w,
+            padding: EdgeInsets.symmetric(horizontal: 48.w, vertical: 52.h),
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
@@ -3627,7 +3694,7 @@ class _PremiumForcedLogoutDialog extends StatelessWidget {
                   _C.surface.withOpacity(0.98),
                 ],
               ),
-              borderRadius: BorderRadius.circular(28 * s),
+              borderRadius: BorderRadius.circular(28.r),
               border: Border.all(
                 color: _C.danger.withOpacity(0.22),
                 width: 1.5,
@@ -3635,7 +3702,7 @@ class _PremiumForcedLogoutDialog extends StatelessWidget {
               boxShadow: [
                 BoxShadow(
                   color: _C.danger.withOpacity(0.1),
-                  blurRadius: 40 * s,
+                  blurRadius: 40.r,
                 ),
               ],
             ),
@@ -3643,8 +3710,8 @@ class _PremiumForcedLogoutDialog extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
-                  width: 72 * s,
-                  height: 72 * s,
+                  width: 72.r,
+                  height: 72.r,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color: _C.danger.withOpacity(0.07),
@@ -3652,43 +3719,43 @@ class _PremiumForcedLogoutDialog extends StatelessWidget {
                     boxShadow: [
                       BoxShadow(
                         color: _C.danger.withOpacity(0.15),
-                        blurRadius: 20 * s,
+                        blurRadius: 20.r,
                       ),
                     ],
                   ),
                   child: Icon(
                     Icons.logout_rounded,
                     color: _C.danger,
-                    size: 32 * s,
+                    size: 32.sp,
                   ),
                 ),
-                SizedBox(height: 28 * s),
+                SizedBox(height: 28.h),
                 Text(
                   'Session Ended',
                   style: TextStyle(
                     color: Colors.white,
-                    fontSize: 26 * s,
+                    fontSize: 26.sp,
                     fontWeight: FontWeight.w800,
-                    letterSpacing: -0.3 * s,
+                    letterSpacing: -0.3.sp,
                   ),
                 ),
-                SizedBox(height: 12 * s),
+                SizedBox(height: 12.h),
                 Text(
                   'You have been logged out remotely.\nRedirecting to login…',
                   style: TextStyle(
                     color: Colors.white.withOpacity(0.4),
-                    fontSize: 14 * s,
+                    fontSize: 14.sp,
                     height: 1.6,
                   ),
                   textAlign: TextAlign.center,
                 ),
-                SizedBox(height: 32 * s),
+                SizedBox(height: 32.h),
                 SizedBox(
-                  width: 24 * s,
-                  height: 24 * s,
+                  width: 24.r,
+                  height: 24.r,
                   child: CircularProgressIndicator(
                     color: _C.accent,
-                    strokeWidth: 2.5 * s,
+                    strokeWidth: 2.5.r,
                   ),
                 ),
               ],
@@ -3701,8 +3768,7 @@ class _PremiumForcedLogoutDialog extends StatelessWidget {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// BALL BY BALL TRACKER — business logic UNCHANGED, TV-scaled visuals.
-// Used only inside LiveScoreScreen; computes its own scale via context.
+// BALL BY BALL TRACKER — business logic UNCHANGED, visuals via ScreenUtil.
 // ═══════════════════════════════════════════════════════════════════════════════
 class _BallByBallTracker extends StatefulWidget {
   final String tournamentId, matchId, inningsId;
@@ -3798,7 +3864,6 @@ class _BallByBallTrackerState extends State<_BallByBallTracker> {
 
   @override
   Widget build(BuildContext context) {
-    final double s = _tvScale(context);
     return StreamBuilder<QuerySnapshot>(
       stream: _ballsStream,
       builder: (context, snap) {
@@ -3819,25 +3884,25 @@ class _BallByBallTrackerState extends State<_BallByBallTracker> {
               'RECENT',
               style: TextStyle(
                 color: _C.textDim,
-                fontSize: 11 * s,
+                fontSize: 15.sp,
                 fontWeight: FontWeight.w800,
-                letterSpacing: 1.5 * s,
+                letterSpacing: 2.sp,
               ),
             ),
-            SizedBox(width: 8 * s),
+            SizedBox(width: 10.w),
             Container(
               width: 1,
-              height: 20 * s,
+              height: 26.h,
               color: Colors.white.withOpacity(0.1),
             ),
-            SizedBox(width: 14 * s),
+            SizedBox(width: 18.w),
             Expanded(
               child: balls.isEmpty
                   ? Text(
                 'No balls bowled yet this over',
                 style: TextStyle(
                   color: Colors.white.withOpacity(0.25),
-                  fontSize: 12 * s,
+                  fontSize: 16.sp,
                 ),
               )
                   : SingleChildScrollView(
@@ -3856,8 +3921,7 @@ class _BallByBallTrackerState extends State<_BallByBallTracker> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// BALL CHIP — restyled as a round chip, TV-scaled. Used only inside
-// LiveScoreScreen; computes its own scale via context.
+// BALL CHIP
 // ═══════════════════════════════════════════════════════════════════════════════
 class _BallChip extends StatelessWidget {
   final Map<String, dynamic>? ball;
@@ -3893,16 +3957,15 @@ class _BallChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final double s = _tvScale(context);
     final col = _color();
     final label = _label();
     final isWicket = ball?['isWicket'] == true;
     final isBoundary = ball?['runs'] == 6 || ball?['runs'] == 4;
 
     return Container(
-      width: 34 * s,
-      height: 34 * s,
-      margin: EdgeInsets.only(left: 8 * s),
+      width: 46.r,
+      height: 46.r,
+      margin: EdgeInsets.only(left: 10.w),
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         color: isWicket ? col : Colors.white.withOpacity(0.04),
@@ -3912,12 +3975,12 @@ class _BallChip extends StatelessWidget {
               : isBoundary
               ? col.withOpacity(0.7)
               : Colors.white.withOpacity(0.15),
-          width: isWicket || isBoundary ? 1.5 : 1,
+          width: isWicket || isBoundary ? 2 : 1,
         ),
         boxShadow: isWicket
-            ? [BoxShadow(color: col.withOpacity(0.4), blurRadius: 8 * s)]
+            ? [BoxShadow(color: col.withOpacity(0.4), blurRadius: 10.r)]
             : isBoundary
-            ? [BoxShadow(color: col.withOpacity(0.25), blurRadius: 6 * s)]
+            ? [BoxShadow(color: col.withOpacity(0.25), blurRadius: 8.r)]
             : [],
       ),
       child: Center(
@@ -3925,7 +3988,7 @@ class _BallChip extends StatelessWidget {
           label,
           style: TextStyle(
             color: isWicket ? Colors.white : col,
-            fontSize: (label.length > 1 ? 10 : 13) * s,
+            fontSize: (label.length > 1 ? 14 : 18).sp,
             fontWeight: FontWeight.w800,
             height: 1,
           ),

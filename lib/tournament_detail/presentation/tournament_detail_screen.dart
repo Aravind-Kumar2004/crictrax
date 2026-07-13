@@ -3,7 +3,10 @@ import 'package:flutter/material.dart';
 import '../../../dashboard/domain/entities/tournament_entity.dart';
 import '../../background/background_manager.dart';
 import '../../splash/presentation/match_splash_screen.dart';
+import '../data/models/Player model.dart';
+import '../data/models/Team model.dart';
 import '../data/models/match_model.dart';
+import '../data/repositories/Team repository.dart';
 import '../data/repositories/tournament_detail_repository.dart';
 import '../../match_detail/presentation/match_detail_screen.dart';
 import 'widgets/match_card_widget.dart';
@@ -15,6 +18,7 @@ import 'widgets/statistics_section.dart';
 import 'widgets/featured_live_match.dart';
 import 'widgets/next_fixtures_section.dart';
 import 'widgets/recent_results_section.dart';
+
 
 // ─── Design Tokens ────────────────────────────────────────────────────────────
 class _C {
@@ -61,6 +65,10 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
   List<TournamentMatchModel> _completed = [];
   List<TournamentMatchModel> _all       = [];
   bool _loading = true;
+  final _teamRepo = TeamRepository();
+  List<TeamModel> _tournamentTeams = [];
+  Map<String, List<PlayerModel>> _playersByTeam = {};
+  bool _teamsLoading = false;
   MatchTab _selectedTab = MatchTab.fixtures;
   StreamSubscription<List<TournamentMatchModel>>? _matchesSub;
   late final BackgroundManager<MatchTab> _backgroundManager;
@@ -73,27 +81,6 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
   @override
   void initState() {
     super.initState();
-    // _backgroundManager = BackgroundManager<MatchTab>(
-    //   leftPlayerAsset: 'assets/images/players/left_player.png',
-    //
-    //   tabAssets: {
-    //     MatchTab.fixtures: const TabPlayerAssets(
-    //       rightPlayerAsset: 'assets/images/players/fixtures_player.png',
-    //     ),
-    //
-    //     MatchTab.live: const TabPlayerAssets(
-    //       rightPlayerAsset: 'assets/images/players/live_player.png',
-    //     ),
-    //
-    //     MatchTab.upcoming: const TabPlayerAssets(
-    //       rightPlayerAsset: 'assets/images/players/upcoming_player.png',
-    //     ),
-    //
-    //     MatchTab.completed: const TabPlayerAssets(
-    //       rightPlayerAsset: 'assets/images/players/completed_player.png',
-    //     ),
-    //   },
-    // );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _backgroundManager.precacheAll(context);
     });
@@ -132,6 +119,8 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
       }
       final matches   = uniqueMatches.values.toList();
       final live      = <TournamentMatchModel>[];
+
+
       final upcoming  = <TournamentMatchModel>[];
       final completed = <TournamentMatchModel>[];
       for (final m in matches) {
@@ -146,6 +135,24 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
         _completed = completed;
         _loading   = false;
       });
+      _loadTeamsAndPlayers();
+    });
+  }
+  Future<void> _loadTeamsAndPlayers() async {
+    final ids = <String>{};
+    for (final m in _all) {
+      if (m.teamId1.isNotEmpty) ids.add(m.teamId1);
+      if (m.teamId2.isNotEmpty) ids.add(m.teamId2);
+    }
+    if (ids.isEmpty) return;
+    setState(() => _teamsLoading = true);
+    final teams = await _teamRepo.getTeamsByIds(ids.toList());
+    final players = await _teamRepo.getPlayersByTeamIds(ids.toList());
+    if (!mounted) return;
+    setState(() {
+      _tournamentTeams = teams;
+      _playersByTeam = players;
+      _teamsLoading = false;
     });
   }
 
@@ -261,11 +268,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
       case NavSection.fixtures:
         return _buildFixturesPage();
       case NavSection.teams:
-        return _buildUnavailableSection(
-          icon: Icons.groups_rounded,
-          title: 'Teams',
-          message: 'Team information for this tournament isn\'t available here yet.',
-        );
+        return _buildTeamsPage();
       case NavSection.pointsTable:
         return _buildUnavailableSection(
           icon: Icons.leaderboard_rounded,
@@ -325,6 +328,32 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
       ],
     );
   }
+
+  Widget _buildTeamsPage() {
+    if (_teamsLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_tournamentTeams.isEmpty) {
+      return _buildUnavailableSection(
+        icon: Icons.groups_rounded,
+        title: 'Teams',
+        message: 'Team information for this tournament isn\'t available here yet.',
+      );
+    }
+    return FocusTraversalGroup(
+      policy: ReadingOrderTraversalPolicy(),
+      child: ListView.builder(
+        padding: const EdgeInsets.all(24),
+        itemCount: _tournamentTeams.length,
+        itemBuilder: (_, i) {
+          final team = _tournamentTeams[i];
+          final roster = _playersByTeam[team.id] ?? const <PlayerModel>[];
+          return _TeamCard(team: team, players: roster);
+        },
+      ),
+    );
+  }
+
 
   // ── Graceful empty state for sections with no data source yet ───────────────
   Widget _buildUnavailableSection({
@@ -434,17 +463,20 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
     return SingleChildScrollView(
       physics: const BouncingScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(32, 12, 32, 36),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (matches.isEmpty)
-            _buildEmptyState(emptyText, emptySub)
-          else
-            ...matches.map((m) => Padding(
-              padding: const EdgeInsets.only(bottom: 14),
-              child: MatchCardWidget(match: m, onTap: () => _openMatch(m)),
-            )),
-        ],
+      child: FocusTraversalGroup(
+        policy: ReadingOrderTraversalPolicy(),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (matches.isEmpty)
+              _buildEmptyState(emptyText, emptySub)
+            else
+              ...matches.map((m) => Padding(
+                padding: const EdgeInsets.only(bottom: 14),
+                child: MatchCardWidget(match: m, onTap: () => _openMatch(m)),
+              )),
+          ],
+        ),
       ),
     );
   }
@@ -664,9 +696,185 @@ class _StatusBadge extends StatelessWidget {
     );
   }
 }
-
 // ═══════════════════════════════════════════════════════════════════════════════
-// HORIZONTAL TAB BAR  (Fixtures page — unchanged from before)
+// TEAM CARD  (Teams page)
+// Was: bare InkWell (touch-only, no premium focus glow consistent with the
+// rest of the app). Now: FocusableActionDetector wraps the header so the
+// D-pad can focus it (glow/scale/border like every other card) and the
+// remote's Select button toggles expand/collapse via the exact same
+// setState call the InkWell already used — no behavioural change.
+// ═══════════════════════════════════════════════════════════════════════════════
+class _TeamCard extends StatefulWidget {
+  final TeamModel team;
+  final List<PlayerModel> players;
+  const _TeamCard({required this.team, required this.players});
+
+  @override
+  State<_TeamCard> createState() => _TeamCardState();
+}
+
+class _TeamCardState extends State<_TeamCard> {
+  bool _expanded = false;
+  bool _focused = false;
+  final FocusNode _focusNode = FocusNode(debugLabel: 'team_card');
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  void _toggleExpanded() => setState(() => _expanded = !_expanded);
+
+  void _handleFocusChange(bool hasFocus) {
+    setState(() => _focused = hasFocus);
+    if (hasFocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        Scrollable.ensureVisible(
+          _focusNode.context ?? context,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+          alignment: 0.5,
+        );
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final team = widget.team;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      decoration: BoxDecoration(
+        color: _C.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: _focused ? _C.accent.withOpacity(0.6) : Colors.white.withOpacity(0.08),
+          width: _focused ? 1.5 : 1,
+        ),
+        boxShadow: _focused ? [BoxShadow(color: _C.accent.withOpacity(0.22), blurRadius: 16)] : [],
+      ),
+      child: Column(
+        children: [
+          FocusableActionDetector(
+            focusNode: _focusNode,
+            onFocusChange: _handleFocusChange,
+            actions: {
+              ActivateIntent: CallbackAction<ActivateIntent>(onInvoke: (_) {
+                _toggleExpanded();
+                return null;
+              }),
+            },
+            child: AnimatedScale(
+              scale: _focused ? 1.015 : 1.0,
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOut,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(14),
+                onTap: _toggleExpanded,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 52, height: 52,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: _C.accent.withOpacity(0.08),
+                          border: Border.all(color: _C.accent.withOpacity(0.2)),
+                        ),
+                        clipBehavior: Clip.antiAlias,
+                        child: team.logo.isNotEmpty
+                            ? Image.network(team.logo, fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) =>
+                            const Icon(Icons.shield_rounded, color: _C.accent))
+                            : const Icon(Icons.shield_rounded, color: _C.accent),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(team.teamName,
+                                style: const TextStyle(
+                                    color: Colors.white, fontSize: 16,
+                                    fontWeight: FontWeight.w700)),
+                            if (team.city.isNotEmpty || team.country.isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: Text(
+                                  [team.city, team.country]
+                                      .where((s) => s.isNotEmpty)
+                                      .join(', '),
+                                  style: TextStyle(
+                                      color: Colors.white.withOpacity(0.4),
+                                      fontSize: 12),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                      Text('${widget.players.length} players',
+                          style: TextStyle(
+                              color: Colors.white.withOpacity(0.35), fontSize: 12)),
+                      const SizedBox(width: 8),
+                      Icon(_expanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+                          color: Colors.white.withOpacity(0.4)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          if (_expanded)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: widget.players.isEmpty
+                  ? Text('No players added yet',
+                  style: TextStyle(
+                      color: Colors.white.withOpacity(0.3), fontSize: 13))
+                  : Column(
+                children: widget.players
+                    .map((p) => Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 28,
+                        child: Text('#${p.jerseyNumber}',
+                            style: TextStyle(
+                                color: _C.accent.withOpacity(0.7),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700)),
+                      ),
+                      Expanded(
+                        child: Text(p.playerName,
+                            style: const TextStyle(
+                                color: Colors.white, fontSize: 13)),
+                      ),
+                      Text(p.role,
+                          style: TextStyle(
+                              color: Colors.white.withOpacity(0.4),
+                              fontSize: 11)),
+                    ],
+                  ),
+                ))
+                    .toList(),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+// ═══════════════════════════════════════════════════════════════════════════════
+// HORIZONTAL TAB BAR  (Fixtures page)
+// Was: raw `Focus` + `Builder` reading `Focus.of(ctx).hasFocus` — the tile
+// could receive focus but pressing Select/Enter on the remote did nothing,
+// because GestureDetector.onTap only fires on a touch tap, never on a key
+// event. Now: FocusableActionDetector registers an ActivateIntent handler
+// that calls the exact same onTap, so the remote's Select button works.
 // ═══════════════════════════════════════════════════════════════════════════════
 class _HorizontalTabBar extends StatelessWidget {
   final MatchTab selectedTab;
@@ -687,45 +895,48 @@ class _HorizontalTabBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(36, 18, 36, 0),
-      child: Row(children: [
-        _TabPill(
-          icon: Icons.calendar_today_rounded,
-          label: 'FIXTURES',
-          color: _C.fixtures,
-          isSelected: selectedTab == MatchTab.fixtures,
-          onTap: () => onTabChanged(MatchTab.fixtures),
-        ),
-        const SizedBox(width: 10),
-        _TabPill(
-          icon: Icons.sensors_rounded,
-          label: 'LIVE',
-          color: _C.live,
-          isSelected: selectedTab == MatchTab.live,
-          onTap: () => onTabChanged(MatchTab.live),
-          pulseAnim: liveCount > 0 ? pulseAnim : null,
-        ),
-        const SizedBox(width: 10),
-        _TabPill(
-          icon: Icons.schedule_rounded,
-          label: 'UPCOMING',
-          color: _C.upcoming,
-          isSelected: selectedTab == MatchTab.upcoming,
-          onTap: () => onTabChanged(MatchTab.upcoming),
-        ),
-        const SizedBox(width: 10),
-        _TabPill(
-          icon: Icons.check_circle_rounded,
-          label: 'COMPLETED',
-          color: _C.completed,
-          isSelected: selectedTab == MatchTab.completed,
-          onTap: () => onTabChanged(MatchTab.completed),
-        ),
-      ]),
+      child: FocusTraversalGroup(
+        policy: ReadingOrderTraversalPolicy(),
+        child: Row(children: [
+          _TabPill(
+            icon: Icons.calendar_today_rounded,
+            label: 'FIXTURES',
+            color: _C.fixtures,
+            isSelected: selectedTab == MatchTab.fixtures,
+            onTap: () => onTabChanged(MatchTab.fixtures),
+          ),
+          const SizedBox(width: 10),
+          _TabPill(
+            icon: Icons.sensors_rounded,
+            label: 'LIVE',
+            color: _C.live,
+            isSelected: selectedTab == MatchTab.live,
+            onTap: () => onTabChanged(MatchTab.live),
+            pulseAnim: liveCount > 0 ? pulseAnim : null,
+          ),
+          const SizedBox(width: 10),
+          _TabPill(
+            icon: Icons.schedule_rounded,
+            label: 'UPCOMING',
+            color: _C.upcoming,
+            isSelected: selectedTab == MatchTab.upcoming,
+            onTap: () => onTabChanged(MatchTab.upcoming),
+          ),
+          const SizedBox(width: 10),
+          _TabPill(
+            icon: Icons.check_circle_rounded,
+            label: 'COMPLETED',
+            color: _C.completed,
+            isSelected: selectedTab == MatchTab.completed,
+            onTap: () => onTabChanged(MatchTab.completed),
+          ),
+        ]),
+      ),
     );
   }
 }
 
-class _TabPill extends StatelessWidget {
+class _TabPill extends StatefulWidget {
   final IconData icon;
   final String label;
   final Color color;
@@ -743,50 +954,69 @@ class _TabPill extends StatelessWidget {
   });
 
   @override
+  State<_TabPill> createState() => _TabPillState();
+}
+
+class _TabPillState extends State<_TabPill> {
+  bool _focused = false;
+  final FocusNode _focusNode = FocusNode(debugLabel: 'tab_pill');
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Focus(
-      child: Builder(builder: (ctx) {
-        final focused = Focus.of(ctx).hasFocus;
-        final active  = focused || isSelected;
-        return GestureDetector(
-          onTap: onTap,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 13),
-            decoration: BoxDecoration(
-              color: active ? color.withOpacity(0.14) : Colors.white.withOpacity(0.03),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(
-                color: active ? color.withOpacity(0.55) : Colors.white.withOpacity(0.07),
-                width: active ? 1.4 : 1,
-              ),
-              boxShadow: active
-                  ? [BoxShadow(color: color.withOpacity(0.18), blurRadius: 14)]
-                  : [],
+    final active = _focused || widget.isSelected;
+    return FocusableActionDetector(
+      focusNode: _focusNode,
+      onShowFocusHighlight: (f) => setState(() => _focused = f),
+      actions: {
+        ActivateIntent: CallbackAction<ActivateIntent>(onInvoke: (_) {
+          widget.onTap();
+          return null;
+        }),
+      },
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 13),
+          decoration: BoxDecoration(
+            color: active ? widget.color.withOpacity(0.14) : Colors.white.withOpacity(0.03),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: active ? widget.color.withOpacity(0.55) : Colors.white.withOpacity(0.07),
+              width: active ? 1.4 : 1,
             ),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              pulseAnim != null
-                  ? AnimatedBuilder(
-                animation: pulseAnim!,
-                builder: (_, __) => Icon(icon,
-                    color: color.withOpacity(0.5 + 0.5 * pulseAnim!.value),
-                    size: 13),
-              )
-                  : Icon(icon,
-                  color: active ? color : Colors.white.withOpacity(0.3),
-                  size: 13),
-              const SizedBox(width: 8),
-              Text(label,
-                  style: TextStyle(
-                    color: active ? Colors.white : Colors.white.withOpacity(0.4),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.5,
-                  )),
-            ]),
+            boxShadow: active
+                ? [BoxShadow(color: widget.color.withOpacity(0.18), blurRadius: 14)]
+                : [],
           ),
-        );
-      }),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            widget.pulseAnim != null
+                ? AnimatedBuilder(
+              animation: widget.pulseAnim!,
+              builder: (_, __) => Icon(widget.icon,
+                  color: widget.color.withOpacity(0.5 + 0.5 * widget.pulseAnim!.value),
+                  size: 13),
+            )
+                : Icon(widget.icon,
+                color: active ? widget.color : Colors.white.withOpacity(0.3),
+                size: 13),
+            const SizedBox(width: 8),
+            Text(widget.label,
+                style: TextStyle(
+                  color: active ? Colors.white : Colors.white.withOpacity(0.4),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.5,
+                )),
+          ]),
+        ),
+      ),
     );
   }
 }

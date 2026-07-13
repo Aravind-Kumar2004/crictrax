@@ -1,4 +1,4 @@
-import '../../domain/entities/match_entity.dart';
+import '../../domain/entities/TournamentMatchEntity.dart';
 
 class TournamentMatchModel extends TournamentMatchEntity {
   const TournamentMatchModel({

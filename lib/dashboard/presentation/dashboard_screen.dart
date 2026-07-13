@@ -1668,57 +1668,6 @@ class _HoverPreviewCardState extends State<_HoverPreviewCard>
                                       ],
                                     ),
                                   ),
-                                  child: Row(
-                                    children: [
-                                      Expanded(
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            vertical: 8,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            gradient: LinearGradient(
-                                              colors: [
-                                                _DS.accent.withOpacity(0.95),
-                                                _DS.accentDim,
-                                              ],
-                                            ),
-                                            borderRadius: BorderRadius.circular(
-                                              8,
-                                            ),
-                                            boxShadow: [
-                                              BoxShadow(
-                                                color: _DS.accent.withOpacity(
-                                                  0.35,
-                                                ),
-                                                blurRadius: 12,
-                                              ),
-                                            ],
-                                          ),
-                                          child: const Row(
-                                            mainAxisAlignment:
-                                            MainAxisAlignment.center,
-                                            children: [
-                                              Icon(
-                                                Icons.play_arrow_rounded,
-                                                color: Colors.white,
-                                                size: 14,
-                                              ),
-                                              SizedBox(width: 5),
-                                              Text(
-                                                'Open',
-                                                style: TextStyle(
-                                                  color: Colors.white,
-                                                  fontSize: 11,
-                                                  fontWeight: FontWeight.w700,
-                                                  letterSpacing: 0.3,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
                                 ),
                               ),
                             ),

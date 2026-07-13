@@ -122,6 +122,11 @@ class LeftNavigationDrawer extends StatelessWidget {
                       icon: item.icon,
                       label: item.label,
                       isSelected: selected == item.section,
+                      // Only the Home tile ever autofocuses, and only on the
+                      // very first build (this is a static condition, not
+                      // tied to `selected`, so it never fights the user for
+                      // focus after the screen has loaded).
+                      autofocus: item.section == NavSection.home,
                       onTap: () => onSelect(item.section),
                     ),
                     const SizedBox(height: 8),
@@ -161,10 +166,18 @@ class _BackTile extends StatefulWidget {
 
 class _BackTileState extends State<_BackTile> {
   bool _focused = false;
+  final FocusNode _focusNode = FocusNode(debugLabel: 'drawer_back');
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return FocusableActionDetector(
+      focusNode: _focusNode,
       onShowFocusHighlight: (f) => setState(() => _focused = f),
       actions: {
         ActivateIntent: CallbackAction<ActivateIntent>(onInvoke: (_) {
@@ -214,6 +227,7 @@ class _DrawerTile extends StatefulWidget {
   final IconData icon;
   final String label;
   final bool isSelected;
+  final bool autofocus;
   final VoidCallback onTap;
 
   const _DrawerTile({
@@ -221,6 +235,7 @@ class _DrawerTile extends StatefulWidget {
     required this.label,
     required this.isSelected,
     required this.onTap,
+    this.autofocus = false,
   });
 
   @override
@@ -229,11 +244,20 @@ class _DrawerTile extends StatefulWidget {
 
 class _DrawerTileState extends State<_DrawerTile> {
   bool _focused = false;
+  final FocusNode _focusNode = FocusNode(debugLabel: 'drawer_tile');
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final active = _focused || widget.isSelected;
     return FocusableActionDetector(
+      focusNode: _focusNode,
+      autofocus: widget.autofocus,
       onShowFocusHighlight: (f) => setState(() => _focused = f),
       actions: {
         ActivateIntent: CallbackAction<ActivateIntent>(onInvoke: (_) {

@@ -237,6 +237,7 @@ class _TournamentCardWidgetState extends State<TournamentCardWidget> {
                                     ],
                                   ],
                                 ),
+                                SizedBox(height:8),
                                 TournamentActionButton(
                                   highlighted: _highlighted,
                                   onTap: widget.onTap,

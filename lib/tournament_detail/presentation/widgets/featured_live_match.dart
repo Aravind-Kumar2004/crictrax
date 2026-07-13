@@ -63,6 +63,29 @@ class _LiveMatchCard extends StatefulWidget {
 
 class _LiveMatchCardState extends State<_LiveMatchCard> {
   bool _buttonFocused = false;
+  final FocusNode _btnFocusNode = FocusNode(debugLabel: 'watch_live_btn');
+
+  @override
+  void dispose() {
+    _btnFocusNode.dispose();
+    super.dispose();
+  }
+
+  void _handleFocusChange(bool hasFocus) {
+    if (hasFocus) {
+      // Scroll the button into view if the home page has been scrolled
+      // such that this card is partially off-screen.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        Scrollable.ensureVisible(
+          _btnFocusNode.context ?? context,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+          alignment: 0.5,
+        );
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -130,7 +153,9 @@ class _LiveMatchCardState extends State<_LiveMatchCard> {
 
           // Watch Live button
           FocusableActionDetector(
+            focusNode: _btnFocusNode,
             onShowFocusHighlight: (f) => setState(() => _buttonFocused = f),
+            onFocusChange: _handleFocusChange,
             actions: {
               ActivateIntent: CallbackAction<ActivateIntent>(onInvoke: (_) {
                 widget.onWatchLive();

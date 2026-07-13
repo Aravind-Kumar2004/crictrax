@@ -24,6 +24,10 @@ class _StatCardData {
 // All five numbers are derived purely from match/team data already loaded by
 // TournamentDetailScreen (teams count is the number of unique team IDs seen
 // across the already-fetched matches — no new Firestore reads).
+//
+// These cards are purely informational (no onTap anywhere in this widget or
+// its parent), so they are intentionally excluded from D-pad focus below —
+// a focusable card with no action would be a dead end for remote navigation.
 // ═══════════════════════════════════════════════════════════════════════════
 class StatisticsSection extends StatelessWidget {
   final int teamsCount;
@@ -53,8 +57,7 @@ class StatisticsSection extends StatelessWidget {
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(32, 24, 32, 0),
-      child: FocusTraversalGroup(
-        policy: ReadingOrderTraversalPolicy(),
+      child: ExcludeFocus(
         child: Row(
           children: [
             for (int i = 0; i < cards.length; i++) ...[
@@ -83,6 +86,10 @@ class _StatCardState extends State<_StatCard> {
   Widget build(BuildContext context) {
     final c = widget.data.color;
     return FocusableActionDetector(
+      // Not clickable — see the note on StatisticsSection above.
+      // (ExcludeFocus on the parent already keeps this out of D-pad
+      // traversal; descendantsAreFocusable just belt-and-braces it.)
+      descendantsAreFocusable: false,
       onShowFocusHighlight: (f) => setState(() => _focused = f),
       child: AnimatedScale(
         scale: _focused ? 1.04 : 1.0,

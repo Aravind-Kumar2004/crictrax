@@ -68,4 +68,32 @@ class TeamRepository {
         .map((d) => PlayerModel.fromMap(d.data(), d.id))
         .toList());
   }
+  Future<List<TeamModel>> getTeamsByIds(List<String> teamIds) async {
+    final uid = _uid;
+    if (uid == null || teamIds.isEmpty) return [];
+    final results = <TeamModel>[];
+    for (var i = 0; i < teamIds.length; i += 10) {
+      final chunk = teamIds.sublist(i, i + 10 > teamIds.length ? teamIds.length : i + 10);
+      final snap = await _db.collection('users').doc(uid).collection('teams')
+          .where(FieldPath.documentId, whereIn: chunk).get();
+      results.addAll(snap.docs.map((d) => TeamModel.fromMap(d.data(), d.id)));
+    }
+    return results;
+  }
+
+  Future<Map<String, List<PlayerModel>>> getPlayersByTeamIds(List<String> teamIds) async {
+    final uid = _uid;
+    if (uid == null || teamIds.isEmpty) return {};
+    final grouped = <String, List<PlayerModel>>{};
+    for (var i = 0; i < teamIds.length; i += 10) {
+      final chunk = teamIds.sublist(i, i + 10 > teamIds.length ? teamIds.length : i + 10);
+      final snap = await _db.collection('users').doc(uid).collection('players')
+          .where('teamId', whereIn: chunk).get();
+      for (final d in snap.docs) {
+        final p = PlayerModel.fromMap(d.data(), d.id);
+        grouped.putIfAbsent(p.teamId, () => []).add(p);
+      }
+    }
+    return grouped;
+  }
 }

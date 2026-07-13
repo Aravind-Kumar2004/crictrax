@@ -11,10 +11,10 @@
         android:required="true" />
 
     <application
-        android:label="crictrax"
+        android:label="CricTrax"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher"
-        android:banner="@drawable/tv_banner">
+        android:icon="@mipmap/crictrax_logo"
+        android:banner="@drawable/crictrax_logo">
 
         <activity
             android:name=".MainActivity"
