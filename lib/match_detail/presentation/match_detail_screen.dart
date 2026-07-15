@@ -1,6 +1,7 @@
 import 'dart:ui';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../data/repositories/match_detail_repository.dart';
 import '../../live_score/presentation/live_score_screen.dart';
 import 'widgets/innings_card_widget.dart';
@@ -16,6 +17,84 @@ class _C {
   static const upcoming  = Color(0xFF00D4FF);
   static const completed = Color(0xFF8A8FA8);
   static const success   = Color(0xFF00E676);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TV FOCUS WRAPPER (D-PAD NAVIGATION ONLY — no design/business logic here)
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// Wraps any interactive element with:
+//   • A FocusNode (lifecycle-managed internally, disposed automatically)
+//   • Keyboard/remote "OK" activation (DPAD_CENTER / Enter / gamepad A)
+//     that calls the SAME onTap callback already used for touch/click —
+//     no navigation logic is duplicated.
+//   • A `focused` flag exposed to a builder so each call-site can render
+//     its own focus visuals (keeps existing UI design fully intact).
+//
+// This widget renders no visuals of its own — visuals are 100% supplied
+// by the `builder` at each call-site, so existing designs are preserved.
+typedef _TvFocusBuilder = Widget Function(BuildContext context, bool focused);
+
+class _TvFocusable extends StatefulWidget {
+  final _TvFocusBuilder builder;
+  final VoidCallback? onTap;
+  final bool autofocus;
+  final String? debugLabel;
+
+  const _TvFocusable({
+    Key? key,
+    required this.builder,
+    this.onTap,
+    this.autofocus = false,
+    this.debugLabel,
+  }) : super(key: key);
+
+  @override
+  State<_TvFocusable> createState() => _TvFocusableState();
+}
+
+class _TvFocusableState extends State<_TvFocusable> {
+  late final FocusNode _focusNode =
+  FocusNode(debugLabel: widget.debugLabel ?? 'TvFocusable');
+  bool _focused = false;
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  void _handleFocusChange(bool focused) {
+    if (mounted) setState(() => _focused = focused);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FocusableActionDetector(
+      focusNode: _focusNode,
+      autofocus: widget.autofocus,
+      onFocusChange: _handleFocusChange,
+      mouseCursor:
+      widget.onTap != null ? SystemMouseCursors.click : MouseCursor.defer,
+      actions: <Type, Action<Intent>>{
+        ActivateIntent: CallbackAction<ActivateIntent>(
+          onInvoke: (intent) {
+            widget.onTap?.call();
+            return null;
+          },
+        ),
+      },
+      shortcuts: const <ShortcutActivator, Intent>{
+        SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
+        SingleActivator(LogicalKeyboardKey.select): ActivateIntent(),
+        SingleActivator(LogicalKeyboardKey.gameButtonA): ActivateIntent(),
+      },
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: widget.builder(context, _focused),
+      ),
+    );
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -69,85 +148,106 @@ class MatchDetailScreen extends StatelessWidget {
             child: _Glow(color: _C.accent, size: 260),
           ),
 
-          Row(
-            children: [
-              // ── Left back rail ─────────────────────────────────────────────
-              _BackRail(onBack: () => Navigator.pop(context)),
+          // ── TV Focus Traversal Group ─────────────────────────────────────
+          // Guarantees deterministic remote traversal order:
+          //   Back Button -> Watch Live Button -> Innings Card 1..N
+          // Directional (Up/Down/Left/Right) presses still resolve using
+          // on-screen geometry via the default secondary policy
+          // (ReadingOrderTraversalPolicy), so arrow-key movement still
+          // "feels" natural, while Tab/Next-focus strictly follows the
+          // explicit order below.
+          FocusTraversalGroup(
+            policy: OrderedTraversalPolicy(),
+            child: Row(
+              children: [
+                // ── Left back rail ─────────────────────────────────────────
+                _BackRail(onBack: () => Navigator.pop(context)),
 
-              // ── Main content ───────────────────────────────────────────────
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(28, 32, 36, 28),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Match header card
-                      _MatchHeaderCard(
-                        team1Name: team1Name,
-                        team2Name: team2Name,
-                        team1Id: team1Id,
-                        team2Id: team2Id,
-                        overs: overs,
-                        isLive: isLive,
-                        isCompleted: isCompleted,
-                        matchId: matchId,
-                        tournamentId: tournamentId,
-                      ),
-
-                      const SizedBox(height: 28),
-
-                      // ── Innings section label ──────────────────────────────
-                      _InningsSectionLabel(isLive: isLive),
-
-                      const SizedBox(height: 16),
-
-                      // ── Innings stream ─────────────────────────────────────
-                      Expanded(
-                        child: StreamBuilder<QuerySnapshot>(
-                          stream: repo.watchInnings(tournamentId, matchId),
-                          builder: (context, snap) {
-                            if (!snap.hasData) {
-                              return _InningsLoadingState();
-                            }
-
-                            final innings = snap.data!.docs;
-
-                            if (innings.isEmpty) {
-                              return _InningsEmptyState(
-                                team1Name: team1Name,
-                                team2Name: team2Name,
-                                isLive: isLive,
-                              );
-                            }
-
-                            return Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: innings.map((inn) {
-                                return Expanded(
-                                  child: Padding(
-                                    padding: const EdgeInsets.only(right: 16),
-                                    child: InningsCardWidget(
-                                      innData: inn.data() as Map<String, dynamic>,
-                                      inningsNumber: innings.indexOf(inn) + 1,
-                                      tournamentId: tournamentId,
-                                      matchId: matchId,
-                                      inningsId: inn.id,
-                                      team1Name: team1Name,
-                                      team2Name: team2Name,
-                                      repo: repo,
-                                    ),
-                                  ),
-                                );
-                              }).toList(),
-                            );
-                          },
+                // ── Main content ───────────────────────────────────────────
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(28, 32, 36, 28),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Match header card
+                        _MatchHeaderCard(
+                          team1Name: team1Name,
+                          team2Name: team2Name,
+                          team1Id: team1Id,
+                          team2Id: team2Id,
+                          overs: overs,
+                          isLive: isLive,
+                          isCompleted: isCompleted,
+                          matchId: matchId,
+                          tournamentId: tournamentId,
                         ),
-                      ),
-                    ],
+
+                        const SizedBox(height: 28),
+
+                        // ── Innings section label ──────────────────────────
+                        _InningsSectionLabel(isLive: isLive),
+
+                        const SizedBox(height: 16),
+
+                        // ── Innings stream ─────────────────────────────────
+                        Expanded(
+                          child: StreamBuilder<QuerySnapshot>(
+                            stream: repo.watchInnings(tournamentId, matchId),
+                            builder: (context, snap) {
+                              if (!snap.hasData) {
+                                return _InningsLoadingState();
+                              }
+
+                              final innings = snap.data!.docs;
+
+                              if (innings.isEmpty) {
+                                return _InningsEmptyState(
+                                  team1Name: team1Name,
+                                  team2Name: team2Name,
+                                  isLive: isLive,
+                                );
+                              }
+
+                              return Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: innings.map((inn) {
+                                  final index = innings.indexOf(inn);
+                                  return Expanded(
+                                    child: Padding(
+                                      padding:
+                                      const EdgeInsets.only(right: 16),
+                                      // Explicit traversal order: cards come
+                                      // after Back (1) and Watch Live (2),
+                                      // in left-to-right innings order.
+                                      child: FocusTraversalOrder(
+                                        order: NumericFocusOrder(
+                                            (10 + index).toDouble()),
+                                        child: InningsCardWidget(
+                                          innData: inn.data()
+                                          as Map<String, dynamic>,
+                                          inningsNumber: index + 1,
+                                          tournamentId: tournamentId,
+                                          matchId: matchId,
+                                          inningsId: inn.id,
+                                          team1Name: team1Name,
+                                          team2Name: team2Name,
+                                          repo: repo,
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                }).toList(),
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ],
       ),
@@ -195,13 +295,15 @@ class _BackRail extends StatelessWidget {
 
           const SizedBox(height: 40),
 
-          // Back button
-          Focus(
-            child: Builder(builder: (ctx) {
-              final focused = Focus.of(ctx).hasFocus;
-              return GestureDetector(
-                onTap: onBack,
-                child: AnimatedContainer(
+          // Back button — traversal order 1 (first stop for the remote)
+          FocusTraversalOrder(
+            order: const NumericFocusOrder(1),
+            child: _TvFocusable(
+              debugLabel: 'BackButton',
+              autofocus: true,
+              onTap: onBack,
+              builder: (context, focused) {
+                return AnimatedContainer(
                   duration: const Duration(milliseconds: 180),
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
@@ -223,9 +325,9 @@ class _BackRail extends StatelessWidget {
                     color: focused ? _C.accent : Colors.white.withOpacity(0.45),
                     size: 20,
                   ),
-                ),
-              );
-            }),
+                );
+              },
+            ),
           ),
 
           const SizedBox(height: 8),
@@ -583,24 +685,27 @@ class _WatchLiveButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Focus(
-      child: Builder(builder: (ctx) {
-        final focused = Focus.of(ctx).hasFocus;
-        return GestureDetector(
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => LiveScoreScreen(
-                matchId: matchId,
-                tournamentId: tournamentId,
-                team1Name: team1Name,
-                team2Name: team2Name,
-                team1Id: team1Id,
-                team2Id: team2Id,
-              ),
+    // Watch Live button — traversal order 2 (second stop for the remote,
+    // right after Back).
+    return FocusTraversalOrder(
+      order: const NumericFocusOrder(2),
+      child: _TvFocusable(
+        debugLabel: 'WatchLiveButton',
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => LiveScoreScreen(
+              matchId: matchId,
+              tournamentId: tournamentId,
+              team1Name: team1Name,
+              team2Name: team2Name,
+              team1Id: team1Id,
+              team2Id: team2Id,
             ),
           ),
-          child: AnimatedContainer(
+        ),
+        builder: (context, focused) {
+          return AnimatedContainer(
             duration: const Duration(milliseconds: 200),
             curve: Curves.easeOut,
             padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 36),
@@ -656,9 +761,9 @@ class _WatchLiveButton extends StatelessWidget {
                 ),
               ],
             ),
-          ),
-        );
-      }),
+          );
+        },
+      ),
     );
   }
 }

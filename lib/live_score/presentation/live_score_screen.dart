@@ -241,10 +241,24 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
     );
   }
 
-  // ── FIXED: single-innings completion check moved ABOVE the innings-break
-  // branch so it can actually execute. Previously it was placed after an
-  // earlier `return`, making it permanently unreachable — a single-innings
-  // match would get stuck showing "Innings Break" forever instead of ending. ──
+  // ═══════════════════════════════════════════════════════════════════
+  // BUG 2 FIX — Match completion detection.
+  //
+  // Root cause: this method (and the match-level listener in
+  // _initMatchSubscription) previously trusted the `isCompleted` boolean
+  // fields on the match/innings documents as the ONLY signal a match had
+  // ended. Those flags are known to be written unreliably by the scorer
+  // app, so a completed chase could leave the TV stuck on the live panel
+  // with nothing telling it the game was actually over.
+  //
+  // Fix: once we're genuinely in the 2nd innings (hasSecondInnings ==
+  // true — this can ONLY mean the chase has begun, never "between
+  // innings"), we ALSO derive completion from numbers we're already
+  // streaming: target reached, or all overs bowled. This is a pure OR —
+  // it never overrides isCompleted, it only fires when isCompleted
+  // hasn't caught up yet but the score already proves the result. No
+  // Firestore write, repository method, navigation, or timer was touched.
+  // ═══════════════════════════════════════════════════════════════════
   void _checkInningsCompletion(List<QueryDocumentSnapshot> docs) {
     if (_hasNavigatedAway) return;
 
@@ -272,8 +286,49 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
             as Map<String, dynamic>)['isCompleted'] ==
                 true;
 
-    if (firstInningsComplete && secondInningsComplete) {
-      debugPrint('✅ both innings complete — match over, navigating');
+    // ── NEW (Bug 2 fix): read-only numeric fallback for chase completion.
+    // Only evaluated when hasSecondInnings is true, because that state can
+    // never mean "between innings" — it means the chase is genuinely on.
+    bool chaseTargetReached = false;
+    bool secondInningsOversExhausted = false;
+    if (hasSecondInnings && !secondInningsComplete) {
+      final secondData =
+      secondInningsDocs.first.data() as Map<String, dynamic>;
+      final secondRuns = (secondData['totalRuns'] as num?)?.toInt() ?? 0;
+
+      // Same target-resolution pattern _BroadcastBottomPanel already uses:
+      // prefer the innings' own targetRuns, fall back to firstInnings+1,
+      // unless hasValidTarget explicitly says the target isn't set yet.
+      final hasValidTargetFlag = secondData['hasValidTarget'];
+      int? target = (secondData['targetRuns'] as num?)?.toInt();
+      if (hasValidTargetFlag == false) target = null;
+      if (target == null && firstInningsDocs.isNotEmpty) {
+        final firstRuns = ((firstInningsDocs.first.data()
+        as Map<String, dynamic>)['totalRuns'] as num?)
+            ?.toInt();
+        if (firstRuns != null) target = firstRuns + 1;
+      }
+      if (target != null && secondRuns >= target) {
+        chaseTargetReached = true;
+      }
+
+      // Same idea for "overs used up" — maxOvers/balls are already read
+      // elsewhere in this file (_BroadcastBottomPanel), reused here.
+      final maxOvers = (secondData['maxOvers'] as num?)?.toInt();
+      final balls = (secondData['balls'] as num?)?.toInt();
+      if (maxOvers != null && balls != null && balls >= maxOvers * 6) {
+        secondInningsOversExhausted = true;
+      }
+    }
+
+    if (firstInningsComplete &&
+        (secondInningsComplete ||
+            chaseTargetReached ||
+            secondInningsOversExhausted)) {
+      debugPrint(
+        '✅ match over — navigating (isCompleted=$secondInningsComplete, '
+            'targetReached=$chaseTargetReached, oversExhausted=$secondInningsOversExhausted)',
+      );
       if (_showInningsBreak) setState(() => _showInningsBreak = false);
       _hasNavigatedAway = true;
       final resultText =
@@ -285,8 +340,11 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
     }
 
     if (firstInningsComplete && !hasSecondInnings) {
-      // ✅ single-innings completion is now checked FIRST, before we ever
-      // set the innings-break UI state, so it's reachable.
+      // ✅ single-innings completion is checked FIRST, before we ever set
+      // the innings-break UI state, so it's reachable.
+      // (Unchanged — we deliberately did NOT add a numeric fallback here:
+      // "no second innings yet" is indistinguishable from "we are between
+      // innings", so isCompleted has to remain the signal in this branch.)
       if (_lastMatchData?['isCompleted'] == true) {
         debugPrint('✅ single innings match complete — navigating');
         _hasNavigatedAway = true;
@@ -314,7 +372,14 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
       return;
     }
 
-    if (hasSecondInnings && _showInningsBreak && _summaryViewed) {
+    // ── FIX (Bug 2 – secondary root cause): previously this only cleared
+    // once the viewer had manually opened the First-Innings scorecard
+    // (`_summaryViewed`). If nobody opened it, the TV stayed stuck on the
+    // Innings Break overlay forever even though the 2nd innings was
+    // already live in Firestore. The break now ends as soon as the 2nd
+    // innings genuinely starts streaming — viewing the scorecard is a
+    // nice-to-have, not a precondition for the live feed to resume.
+    if (hasSecondInnings && _showInningsBreak) {
       setState(() {
         _showInningsBreak = false;
       });
@@ -407,6 +472,39 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
               child: _AmbientGlow(color: _C.live, size: 220.r),
             ),
 
+            // ── SIDE AD BANNERS — replaces the old bottom sponsored
+            // banner. Shown as two vertical carousels docked to the left
+            // and right edges of the screen. Hidden on narrow widths so
+            // they don't crowd a phone-sized layout. ─────────────────────
+            if (MediaQuery.of(context).size.width >= 1000)
+              Positioned(
+                left: 16.w,
+                top: 0,
+                bottom: 0,
+                child: Center(
+                  child: _SideAdBanner(
+                    images: const [
+                      'assets/images/ad_banner_1.png',
+                      'assets/images/ad_banner_3.png',
+                    ],
+                  ),
+                ),
+              ),
+            if (MediaQuery.of(context).size.width >= 1000)
+              Positioned(
+                right: 16.w,
+                top: 0,
+                bottom: 0,
+                child: Center(
+                  child: _SideAdBanner(
+                    images: const [
+                      'assets/images/ad_banner2.png',
+                      'assets/images/ad_banner_3.png',
+                    ],
+                  ),
+                ),
+              ),
+
             // ── Discreet back / live chrome strip ─────────────────────────
             SafeArea(
               child: Padding(
@@ -457,7 +555,7 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
                       'CRICTRAX',
                       style: TextStyle(
                         color: Colors.white.withOpacity(0.28),
-                        fontSize: 15.sp,
+                        fontSize: 17.sp,
                         fontWeight: FontWeight.w800,
                         letterSpacing: 3.2.sp,
                       ),
@@ -497,7 +595,7 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
                               'LIVE',
                               style: TextStyle(
                                 color: _C.live,
-                                fontSize: 14.sp,
+                                fontSize: 17.sp,
                                 fontWeight: FontWeight.w900,
                                 letterSpacing: 2.sp,
                               ),
@@ -798,7 +896,6 @@ class _MatchSummaryScreen extends StatefulWidget {
   @override
   State<_MatchSummaryScreen> createState() => _MatchSummaryScreenState();
 }
-
 class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
   Map<String, List<Map<String, dynamic>>> _batsmen = {};
   Map<String, List<Map<String, dynamic>>> _bowlers = {};
@@ -811,6 +908,7 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
     _load();
   }
 
+  // ── UNCHANGED: Firestore load logic ─────────────────────────────────────
   Future<void> _load() async {
     try {
       final db = FirebaseFirestore.instance;
@@ -885,12 +983,17 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
             SafeArea(
               child: Column(
                 children: [
+                  // ══════════════════════════════════════════════════════
+                  // ENLARGED APP BAR — back icon, trophy badge, title text,
+                  // result text, and "Back to Tournament" button all scaled
+                  // up for TV readability from a couch distance.
+                  // ══════════════════════════════════════════════════════
                   Padding(
                     padding: EdgeInsets.fromLTRB(24.w, 16.h, 24.w, 0),
                     child: _CardShell(
                       padding: EdgeInsets.symmetric(
-                        horizontal: 20.w,
-                        vertical: 14.h,
+                        horizontal: 28.w,
+                        vertical: 20.h,
                       ),
                       child: Row(
                         children: [
@@ -898,12 +1001,13 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
                             onTap: () => Navigator.pop(context),
                             builder: (context, focused) => AnimatedContainer(
                               duration: const Duration(milliseconds: 150),
-                              padding: EdgeInsets.all(9.r),
+                              // ENLARGED: 9.r → 14.r
+                              padding: EdgeInsets.all(14.r),
                               decoration: BoxDecoration(
                                 color: focused
                                     ? _C.accent.withOpacity(0.16)
                                     : Colors.white.withOpacity(0.06),
-                                borderRadius: BorderRadius.circular(9.r),
+                                borderRadius: BorderRadius.circular(12.r),
                                 border: Border.all(
                                   color: focused
                                       ? _C.accent
@@ -924,16 +1028,18 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
                                 color: focused
                                     ? _C.accent
                                     : Colors.white.withOpacity(0.75),
-                                size: 18.sp,
+                                // ENLARGED: 18.sp → 26.sp
+                                size: 26.sp,
                               ),
                             ),
                           ),
-                          SizedBox(width: 16.w),
+                          SizedBox(width: 20.w),
                           Container(
-                            padding: EdgeInsets.all(8.r),
+                            // ENLARGED: 8.r → 12.r
+                            padding: EdgeInsets.all(12.r),
                             decoration: BoxDecoration(
                               color: _C.gold.withOpacity(0.12),
-                              borderRadius: BorderRadius.circular(9.r),
+                              borderRadius: BorderRadius.circular(12.r),
                               border: Border.all(
                                 color: _C.gold.withOpacity(0.25),
                               ),
@@ -941,10 +1047,11 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
                             child: Icon(
                               Icons.emoji_events,
                               color: _C.gold,
-                              size: 20.sp,
+                              // ENLARGED: 20.sp → 28.sp
+                              size: 28.sp,
                             ),
                           ),
-                          SizedBox(width: 14.w),
+                          SizedBox(width: 18.w),
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -952,38 +1059,41 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
                               children: [
                                 Text(
                                   '${widget.team1Name} vs ${widget.team2Name}',
+                                  // ENLARGED: 20.sp → 30.sp
                                   style: TextStyle(
                                     color: Colors.white,
-                                    fontSize: 17.sp,
+                                    fontSize: 30.sp,
                                     fontWeight: FontWeight.w800,
                                   ),
                                 ),
-                                SizedBox(height: 2.h),
+                                SizedBox(height: 4.h),
                                 Text(
                                   widget.resultText,
+                                  // ENLARGED: 15.sp → 20.sp
                                   style: TextStyle(
                                     color: _C.orange,
-                                    fontSize: 13.sp,
+                                    fontSize: 20.sp,
                                     fontWeight: FontWeight.w600,
                                   ),
                                 ),
                               ],
                             ),
                           ),
-                          SizedBox(width: 12.w),
+                          SizedBox(width: 16.w),
                           _DpadFocusable(
                             onTap: () => Navigator.pop(context),
                             builder: (context, focused) => AnimatedContainer(
                               duration: const Duration(milliseconds: 150),
+                              // ENLARGED: h16.w v10.h → h24.w v16.h
                               padding: EdgeInsets.symmetric(
-                                horizontal: 16.w,
-                                vertical: 10.h,
+                                horizontal: 24.w,
+                                vertical: 16.h,
                               ),
                               decoration: BoxDecoration(
                                 color: focused
                                     ? _C.accent.withOpacity(0.18)
                                     : _C.accent.withOpacity(0.08),
-                                borderRadius: BorderRadius.circular(20.r),
+                                borderRadius: BorderRadius.circular(24.r),
                                 border: Border.all(
                                   color: focused
                                       ? _C.accent
@@ -1005,14 +1115,16 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
                                   Icon(
                                     Icons.arrow_back,
                                     color: _C.accent,
-                                    size: 14.sp,
+                                    // ENLARGED: 14.sp → 19.sp
+                                    size: 19.sp,
                                   ),
-                                  SizedBox(width: 8.w),
+                                  SizedBox(width: 10.w),
                                   Text(
                                     'Back to Tournament',
+                                    // ENLARGED: 14.sp → 20.sp
                                     style: TextStyle(
                                       color: _C.accent.withOpacity(0.9),
-                                      fontSize: 12.sp,
+                                      fontSize: 20.sp,
                                       fontWeight: FontWeight.w700,
                                     ),
                                   ),
@@ -1041,12 +1153,17 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
     );
   }
 
+  // ═══════════════════════════════════════════════════════════════════
+  // SLIGHTLY REDUCED: scorecard width pulled back from 1560.w → 1400.w,
+  // and typography/padding trimmed a notch so the cards aren't as
+  // oversized while staying well above the original small version.
+  // ═══════════════════════════════════════════════════════════════════
   Widget _buildSummary() {
     if (_innData.isEmpty) {
       return Center(
         child: Text(
           'No match data available',
-          style: TextStyle(color: Colors.white.withOpacity(0.38), fontSize: 18.sp),
+          style: TextStyle(color: Colors.white.withOpacity(0.38), fontSize: 20.sp),
         ),
       );
     }
@@ -1061,7 +1178,8 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
     return SingleChildScrollView(
       padding: EdgeInsets.all(24.w),
       child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: 960.w),
+        // REDUCED: 1560.w → 1400.w
+        constraints: BoxConstraints(maxWidth: 1400.w),
         child: Column(
           children: inningsList.map((entry) {
             final innId = entry.key;
@@ -1087,16 +1205,18 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
                 : '${totalBalls ~/ 6}.${totalBalls % 6}';
 
             return Padding(
-              padding: EdgeInsets.only(bottom: 24.h),
+              // REDUCED: 32.h → 26.h
+              padding: EdgeInsets.only(bottom: 26.h),
               child: _CardShell(
                 padding: EdgeInsets.zero,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Container(
+                      // REDUCED: 22.h → 18.h
                       padding: EdgeInsets.symmetric(
                         horizontal: 24.w,
-                        vertical: 14.h,
+                        vertical: 18.h,
                       ),
                       decoration: BoxDecoration(
                         color: Colors.white.withOpacity(0.03),
@@ -1108,8 +1228,8 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
                         children: [
                           Container(
                             padding: EdgeInsets.symmetric(
-                              horizontal: 10.w,
-                              vertical: 4.h,
+                              horizontal: 12.w,
+                              vertical: 6.h,
                             ),
                             decoration: BoxDecoration(
                               color: _C.purple.withOpacity(0.2),
@@ -1120,29 +1240,32 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
                             ),
                             child: Text(
                               'Innings ${isSecond ? 2 : 1}',
+                              // REDUCED: 20.sp → 17.sp
                               style: TextStyle(
                                 color: _C.purple,
-                                fontSize: 12.sp,
+                                fontSize: 17.sp,
                                 fontWeight: FontWeight.w700,
                               ),
                             ),
                           ),
-                          SizedBox(width: 16.w),
+                          SizedBox(width: 14.w),
                           Expanded(
                             child: Text(
                               batTeam.isNotEmpty ? batTeam : 'Batting Team',
+                              // REDUCED: 38.sp → 32.sp
                               style: TextStyle(
                                 color: Colors.white,
-                                fontSize: 18.sp,
+                                fontSize: 32.sp,
                                 fontWeight: FontWeight.w700,
                               ),
                             ),
                           ),
                           Text(
                             '$totalRuns/$totalWkts ($overs ov)',
+                            // REDUCED: 46.sp → 38.sp
                             style: TextStyle(
                               color: _C.orange,
-                              fontSize: 20.sp,
+                              fontSize: 38.sp,
                               fontWeight: FontWeight.w900,
                             ),
                           ),
@@ -1150,7 +1273,8 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
                       ),
                     ),
                     Padding(
-                      padding: EdgeInsets.all(24.w),
+                      // REDUCED: 32.w → 26.w
+                      padding: EdgeInsets.all(26.w),
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -1159,7 +1283,7 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 _summaryLabel('BATTING', _C.orange),
-                                SizedBox(height: 8.h),
+                                SizedBox(height: 10.h),
                                 _summaryHeader([
                                   'Batter',
                                   'R',
@@ -1168,7 +1292,7 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
                                   '6s',
                                   'SR',
                                 ]),
-                                Divider(color: Colors.white12, height: 8.h),
+                                Divider(color: Colors.white12, height: 12.h),
                                 ...(batsmen..sort(
                                       (a, b) => ((b['runs'] ?? 0) as num)
                                       .compareTo((a['runs'] ?? 0) as num),
@@ -1177,13 +1301,14 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
                               ],
                             ),
                           ),
-                          SizedBox(width: 32.w),
+                          // REDUCED: 48.w → 38.w
+                          SizedBox(width: 38.w),
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 _summaryLabel('BOWLING', _C.accent),
-                                SizedBox(height: 8.h),
+                                SizedBox(height: 10.h),
                                 _summaryHeader([
                                   'Bowler',
                                   'O',
@@ -1191,7 +1316,7 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
                                   'W',
                                   'Eco',
                                 ]),
-                                Divider(color: Colors.white12, height: 8.h),
+                                Divider(color: Colors.white12, height: 12.h),
                                 ...(bowlers..sort(
                                       (a, b) => ((b['wickets'] ?? 0) as num)
                                       .compareTo(
@@ -1215,28 +1340,30 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
     );
   }
 
+  // REDUCED: label 26.sp → 22.sp, accent bar 5.w×24.h → 4.w×20.h
   Widget _summaryLabel(String text, Color color) => Row(
     children: [
       Container(
-        width: 3.w,
-        height: 16.h,
+        width: 4.w,
+        height: 20.h,
         color: color,
-        margin: EdgeInsets.only(right: 8.w),
+        margin: EdgeInsets.only(right: 9.w),
       ),
       Text(
         text,
         style: TextStyle(
           color: color,
-          fontSize: 12.sp,
+          fontSize: 22.sp,
           fontWeight: FontWeight.w800,
-          letterSpacing: 1.2.sp,
+          letterSpacing: 1.3.sp,
         ),
       ),
     ],
   );
 
+  // REDUCED: header text 21.sp → 18.sp, column width 62.w → 54.w
   Widget _summaryHeader(List<String> cols) => Padding(
-    padding: EdgeInsets.symmetric(vertical: 4.h),
+    padding: EdgeInsets.symmetric(vertical: 5.h),
     child: Row(
       children: [
         Expanded(
@@ -1244,7 +1371,7 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
             cols[0],
             style: TextStyle(
               color: Colors.white38,
-              fontSize: 11.sp,
+              fontSize: 18.sp,
               fontWeight: FontWeight.w700,
             ),
           ),
@@ -1253,13 +1380,13 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
             .skip(1)
             .map(
               (c) => SizedBox(
-            width: 42.w,
+            width: 54.w,
             child: Text(
               c,
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: Colors.white38,
-                fontSize: 11.sp,
+                fontSize: 18.sp,
                 fontWeight: FontWeight.w700,
               ),
             ),
@@ -1269,6 +1396,7 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
     ),
   );
 
+  // REDUCED: row vertical padding 16.h → 12.h, text 23.sp → 20.sp
   Widget _batsmanRow(Map<String, dynamic> b) {
     final name = (b['playerName'] ?? b['name'] ?? '').toString();
     final runs = (b['runs'] ?? 0) as num;
@@ -1278,7 +1406,7 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
     final sr = balls > 0 ? ((runs / balls) * 100).toStringAsFixed(1) : '0.0';
     final isOut = b['isOut'] == true;
     return Container(
-      padding: EdgeInsets.symmetric(vertical: 8.h),
+      padding: EdgeInsets.symmetric(vertical: 12.h),
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: Colors.white10, width: 0.5)),
       ),
@@ -1289,7 +1417,8 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
               name.length > 16 ? '${name.substring(0, 16)}…' : name,
               style: TextStyle(
                 color: isOut ? Colors.white54 : Colors.white70,
-                fontSize: 13.sp,
+                fontSize: 20.sp,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ),
@@ -1303,6 +1432,7 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
     );
   }
 
+  // REDUCED: same treatment as _batsmanRow
   Widget _bowlerRow(Map<String, dynamic> b) {
     final name = (b['playerName'] ?? b['name'] ?? '').toString();
     final overs = b['overs'] ?? 0;
@@ -1310,7 +1440,7 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
     final wkts = (b['wickets'] ?? 0) as num;
     final eco = (b['economy'] ?? 0) as num;
     return Container(
-      padding: EdgeInsets.symmetric(vertical: 8.h),
+      padding: EdgeInsets.symmetric(vertical: 12.h),
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: Colors.white10, width: 0.5)),
       ),
@@ -1319,7 +1449,11 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
           Expanded(
             child: Text(
               name.length > 16 ? '${name.substring(0, 16)}…' : name,
-              style: TextStyle(color: Colors.white70, fontSize: 13.sp),
+              style: TextStyle(
+                color: Colors.white70,
+                fontSize: 20.sp,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
           _sc('$overs'),
@@ -1331,14 +1465,15 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
     );
   }
 
+  // REDUCED: stat cell width 62.w → 54.w, text 23.sp → 20.sp
   Widget _sc(String t, {bool bold = false, Color? color}) => SizedBox(
-    width: 42.w,
+    width: 54.w,
     child: Text(
       t,
       textAlign: TextAlign.center,
       style: TextStyle(
         color: color ?? Colors.white60,
-        fontSize: 13.sp,
+        fontSize: 20.sp,
         fontWeight: bold ? FontWeight.w800 : FontWeight.w500,
       ),
     ),
@@ -1533,7 +1668,7 @@ class _FirstInningsSummaryScreenState
                                   '${widget.team1Name} vs ${widget.team2Name}',
                                   style: TextStyle(
                                     color: Colors.white,
-                                    fontSize: 17.sp,
+                                    fontSize: 20.sp,
                                     fontWeight: FontWeight.w800,
                                   ),
                                 ),
@@ -1542,7 +1677,7 @@ class _FirstInningsSummaryScreenState
                                   '1st Innings Scorecard',
                                   style: TextStyle(
                                     color: _C.textDim,
-                                    fontSize: 13.sp,
+                                    fontSize: 15.sp,
                                     fontWeight: FontWeight.w600,
                                   ),
                                 ),
@@ -1572,7 +1707,7 @@ class _FirstInningsSummaryScreenState
                                     battingTeam.toUpperCase(),
                                     style: TextStyle(
                                       color: Colors.white70,
-                                      fontSize: 12.sp,
+                                      fontSize: 14.sp,
                                       fontWeight: FontWeight.w800,
                                       letterSpacing: 1.5.sp,
                                     ),
@@ -1588,7 +1723,7 @@ class _FirstInningsSummaryScreenState
                                         '${widget.firstInningsRuns}',
                                         style: TextStyle(
                                           color: Colors.white,
-                                          fontSize: 48.sp,
+                                          fontSize: 56.sp,
                                           fontWeight: FontWeight.w900,
                                         ),
                                       ),
@@ -1596,7 +1731,7 @@ class _FirstInningsSummaryScreenState
                                         '/${widget.firstInningsWickets}',
                                         style: TextStyle(
                                           color: _C.accent,
-                                          fontSize: 48.sp,
+                                          fontSize: 56.sp,
                                           fontWeight: FontWeight.w900,
                                         ),
                                       ),
@@ -1630,7 +1765,7 @@ class _FirstInningsSummaryScreenState
                                           'Target: $target runs to win',
                                           style: TextStyle(
                                             color: _C.gold,
-                                            fontSize: 15.sp,
+                                            fontSize: 18.sp,
                                             fontWeight: FontWeight.w800,
                                           ),
                                         ),
@@ -1677,7 +1812,7 @@ class _FirstInningsSummaryScreenState
                                               style: TextStyle(
                                                 color: Colors.white
                                                     .withOpacity(0.35),
-                                                fontSize: 13.sp,
+                                                fontSize: 15.sp,
                                               ),
                                             ),
                                           )
@@ -1725,7 +1860,7 @@ class _FirstInningsSummaryScreenState
                                               style: TextStyle(
                                                 color: Colors.white
                                                     .withOpacity(0.35),
-                                                fontSize: 13.sp,
+                                                fontSize: 15.sp,
                                               ),
                                             ),
                                           )
@@ -1773,7 +1908,7 @@ class _FirstInningsSummaryScreenState
         text,
         style: TextStyle(
           color: color,
-          fontSize: 12.sp,
+          fontSize: 15.sp,
           fontWeight: FontWeight.w800,
           letterSpacing: 1.2.sp,
         ),
@@ -1790,7 +1925,7 @@ class _FirstInningsSummaryScreenState
             cols[0],
             style: TextStyle(
               color: Colors.white38,
-              fontSize: 11.sp,
+              fontSize: 14.sp,
               fontWeight: FontWeight.w700,
             ),
           ),
@@ -1805,7 +1940,7 @@ class _FirstInningsSummaryScreenState
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: Colors.white38,
-                fontSize: 11.sp,
+                fontSize: 14.sp,
                 fontWeight: FontWeight.w700,
               ),
             ),
@@ -1835,7 +1970,8 @@ class _FirstInningsSummaryScreenState
               name.length > 16 ? '${name.substring(0, 16)}…' : name,
               style: TextStyle(
                 color: isOut ? Colors.white54 : Colors.white70,
-                fontSize: 13.sp,
+                fontSize: 16.sp,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ),
@@ -1865,7 +2001,11 @@ class _FirstInningsSummaryScreenState
           Expanded(
             child: Text(
               name.length > 16 ? '${name.substring(0, 16)}…' : name,
-              style: TextStyle(color: Colors.white70, fontSize: 13.sp),
+              style: TextStyle(
+                color: Colors.white70,
+                fontSize: 16.sp,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
           _fiCell('$overs'),
@@ -1888,7 +2028,7 @@ class _FirstInningsSummaryScreenState
       textAlign: TextAlign.center,
       style: TextStyle(
         color: color ?? Colors.white60,
-        fontSize: 13.sp,
+        fontSize: 16.sp,
         fontWeight: bold ? FontWeight.w800 : FontWeight.w500,
       ),
     ),
@@ -1965,7 +2105,7 @@ class _TeamBadge extends StatelessWidget {
               initial,
               style: TextStyle(
                 color: Colors.white,
-                fontSize: 20.sp,
+                fontSize: 24.sp,
                 fontWeight: FontWeight.w900,
               ),
             ),
@@ -1976,7 +2116,7 @@ class _TeamBadge extends StatelessWidget {
           name.toUpperCase(),
           style: TextStyle(
             color: Colors.white,
-            fontSize: 36.sp,
+            fontSize: 42.sp,
             fontWeight: FontWeight.w900,
             letterSpacing: 0.5.sp,
           ),
@@ -2005,7 +2145,7 @@ class _TeamsHeaderStatic extends StatelessWidget {
             'VS',
             style: TextStyle(
               color: Colors.white.withOpacity(0.3),
-              fontSize: 18.sp,
+              fontSize: 21.sp,
               fontWeight: FontWeight.w800,
               letterSpacing: 2.5.sp,
             ),
@@ -2050,7 +2190,7 @@ class _StatusCard extends StatelessWidget {
             label,
             style: TextStyle(
               color: color.withOpacity(0.75),
-              fontSize: 18.sp,
+              fontSize: 21.sp,
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -2181,6 +2321,9 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
               .toList();
         }
         final allBatsmen = _cachedBatsmen;
+        final batsmenStillConnecting =
+            batSnap.connectionState == ConnectionState.waiting &&
+                _cachedBatsmen.isEmpty;
 
         final calculatedRuns = allBatsmen.fold<int>(
           0,
@@ -2307,6 +2450,9 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
               }
             }
             final bowler = _cachedBowler;
+            final bowlerStillConnecting =
+                bowlSnap.connectionState == ConnectionState.waiting &&
+                    _cachedBowler == null;
             final crr = totalBalls > 0
                 ? (totalRuns / totalBalls) * 6
                 : (widget.innData['currentRunRate'] ?? 0.0);
@@ -2337,6 +2483,8 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
               ballsRemaining: ballsRemaining,
               oversRemaining: oversRemaining,
               currentOverNumber: currentOverNumber,
+              batsmenConnecting: batsmenStillConnecting,
+              bowlerConnecting: bowlerStillConnecting,
             );
           },
         );
@@ -2345,6 +2493,23 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
   }
 
   // ── Visual layer, ScreenUtil-scaled ─────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════
+  // UI UPDATE (per latest request):
+  //  1. Bottom sponsored banner removed from here entirely — replaced by
+  //     the two _SideAdBanner widgets docked to the screen edges in
+  //     LiveScoreScreen.build().
+  //  2. Score digits enlarged (100.sp → 132.sp) for far-distance
+  //     readability; the overs/CRR pill and the FULL SCORECARD button now
+  //     sit together directly under the score inside the same header
+  //     card, instead of overs/CRR alone up top and the scorecard button
+  //     as a separate element down at the bottom of the page.
+  //  3. Target/runs-needed/balls-remaining bar (_TargetInfoBar) kept as
+  //     its own row directly below that pill/button row, still inside the
+  //     header card — just repositioned as part of the same reshuffle.
+  //  4. FULL SCORECARD button: same onTap/navigation, same
+  //     _MatchSummaryScreen push — only its position changed.
+  // No stream, Firestore, or state logic touched below.
+  // ═══════════════════════════════════════════════════════════════════
   Widget _buildBroadcastPanel({
     required BuildContext context,
     required String battingTeamName,
@@ -2362,6 +2527,8 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
     required int? ballsRemaining,
     required String? oversRemaining,
     required int currentOverNumber,
+    required bool batsmenConnecting, // NEW (Bug 1 fix)
+    required bool bowlerConnecting,
   }) {
     final crrStr = crr is double
         ? crr.toStringAsFixed(2)
@@ -2370,9 +2537,9 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // ── HEADER CARD: teams + big score + overs/CRR pill ──────────────
+        // ── HEADER CARD: teams + big score + overs/CRR + Full Scorecard ──
         _CardShell(
-          padding: EdgeInsets.fromLTRB(38.w, 32.h, 38.w, 34.h),
+          padding: EdgeInsets.fromLTRB(38.w, 32.h, 38.w, 30.h),
           child: Column(
             children: [
               Row(
@@ -2383,7 +2550,7 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
                     'VS',
                     style: TextStyle(
                       color: Colors.white.withOpacity(0.3),
-                      fontSize: 18.sp,
+                      fontSize: 21.sp,
                       fontWeight: FontWeight.w800,
                       letterSpacing: 2.5.sp,
                     ),
@@ -2391,7 +2558,8 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
                   _TeamBadge(name: widget.team2Name),
                 ],
               ),
-              SizedBox(height: 24.h),
+              SizedBox(height: 26.h),
+              // ── BIG SCORE (enlarged: 100.sp → 132.sp) ───────────────
               Center(
                 child: RichText(
                   text: TextSpan(
@@ -2400,7 +2568,7 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
                         text: '$totalRuns',
                         style: TextStyle(
                           color: Colors.white,
-                          fontSize: 88.sp,
+                          fontSize: 132.sp,
                           fontWeight: FontWeight.w900,
                           height: 1,
                           letterSpacing: -2.sp,
@@ -2410,7 +2578,7 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
                         text: '/$totalWickets',
                         style: TextStyle(
                           color: _C.accent,
-                          fontSize: 88.sp,
+                          fontSize: 132.sp,
                           fontWeight: FontWeight.w900,
                           height: 1,
                           letterSpacing: -2.sp,
@@ -2420,68 +2588,144 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
                   ),
                 ),
               ),
-              SizedBox(height: 20.h),
-              Container(
-                padding: EdgeInsets.symmetric(
-                  horizontal: 26.w,
-                  vertical: 12.h,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.04),
-                  borderRadius: BorderRadius.circular(36.r),
-                  border: Border.all(color: Colors.white.withOpacity(0.08)),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      '$oversDisplay',
-                      style: TextStyle(
-                        color: _C.accent,
-                        fontSize: 20.sp,
-                        fontWeight: FontWeight.w800,
+              SizedBox(height: 22.h),
+              // ── OVERS / CRR pill + FULL SCORECARD (moved up here from
+              // the bottom of the page; same onTap/navigation) ──────────
+              Wrap(
+                alignment: WrapAlignment.center,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 14.w,
+                runSpacing: 12.h,
+                children: [
+                  Container(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: 26.w,
+                      vertical: 12.h,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.04),
+                      borderRadius: BorderRadius.circular(36.r),
+                      border: Border.all(
+                        color: Colors.white.withOpacity(0.08),
                       ),
                     ),
-                    SizedBox(width: 8.w),
-                    Text(
-                      'OVERS',
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.35),
-                        fontSize: 14.sp,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 1.2.sp,
-                      ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          '$oversDisplay',
+                          style: TextStyle(
+                            color: _C.accent,
+                            fontSize: 24.sp,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        SizedBox(width: 8.w),
+                        Text(
+                          'OVERS',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.35),
+                            fontSize: 17.sp,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 1.2.sp,
+                          ),
+                        ),
+                        SizedBox(width: 16.w),
+                        Container(
+                          width: 5.r,
+                          height: 5.r,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: _C.accent.withOpacity(0.6),
+                          ),
+                        ),
+                        SizedBox(width: 16.w),
+                        Text(
+                          'CRR:',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.35),
+                            fontSize: 17.sp,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 1.2.sp,
+                          ),
+                        ),
+                        SizedBox(width: 8.w),
+                        Text(
+                          crrStr,
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 24.sp,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
                     ),
-                    SizedBox(width: 16.w),
-                    Container(
-                      width: 5.r,
-                      height: 5.r,
+                  ),
+                  // ── FULL SCORECARD BUTTON — same onTap/navigation as
+                  // before, only its position changed (was a standalone
+                  // Center() block at the bottom of the page). ──────────
+                  _DpadFocusable(
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => _MatchSummaryScreen(
+                            tournamentId: widget.tournamentId,
+                            matchId: widget.matchId,
+                            team1Name: widget.team1Name,
+                            team2Name: widget.team2Name,
+                            resultText: 'Live',
+                            repo: widget.repo,
+                          ),
+                        ),
+                      );
+                    },
+                    builder: (context, focused) => AnimatedContainer(
+                      duration: const Duration(milliseconds: 150),
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 22.w,
+                        vertical: 12.h,
+                      ),
                       decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: _C.accent.withOpacity(0.6),
+                        color: focused
+                            ? _C.accent.withOpacity(0.16)
+                            : _C.accent.withOpacity(0.06),
+                        borderRadius: BorderRadius.circular(36.r),
+                        border: Border.all(
+                          color: _C.accent.withOpacity(focused ? 1 : 0.55),
+                          width: focused ? 2.5 : 1.5,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: _C.accent.withOpacity(
+                              focused ? 0.35 : 0.18,
+                            ),
+                            blurRadius: focused ? 24.r : 16.r,
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.assignment_outlined,
+                            color: _C.accent,
+                            size: 18.sp,
+                          ),
+                          SizedBox(width: 8.w),
+                          Text(
+                            'FULL SCORECARD',
+                            style: TextStyle(
+                              color: _C.accent,
+                              fontSize: 16.sp,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 1.sp,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    SizedBox(width: 16.w),
-                    Text(
-                      'CRR:',
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.35),
-                        fontSize: 14.sp,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 1.2.sp,
-                      ),
-                    ),
-                    SizedBox(width: 8.w),
-                    Text(
-                      crrStr,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 20.sp,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ),
               if (target != null && runsNeeded != null) ...[
                 SizedBox(height: 20.h),
@@ -2508,11 +2752,13 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
               child: _BatsmenCard(
                 battingTeamName: battingTeamName,
                 batters: activeBatsmen,
+                isConnecting: batsmenConnecting,
+                pulseAnim: widget.pulseAnim,
               ),
             ),
             SizedBox(width: 24.w),
             Expanded(
-              child: _BowlerCard(bowlingTeamName: opponentName, bowler: bowler),
+              child: _BowlerCard(bowlingTeamName: opponentName, bowler: bowler,  isConnecting: bowlerConnecting,),
             ),
           ],
         ),
@@ -2531,75 +2777,7 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
           ),
         ),
 
-        SizedBox(height: 28.h),
-
-        // ── FULL SCORECARD BUTTON (D-pad focusable) ────────────────────────
-        Center(
-          child: _DpadFocusable(
-            onTap: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => _MatchSummaryScreen(
-                    tournamentId: widget.tournamentId,
-                    matchId: widget.matchId,
-                    team1Name: widget.team1Name,
-                    team2Name: widget.team2Name,
-                    resultText: 'Live',
-                    repo: widget.repo,
-                  ),
-                ),
-              );
-            },
-            builder: (context, focused) => AnimatedContainer(
-              duration: const Duration(milliseconds: 150),
-              padding: EdgeInsets.symmetric(
-                horizontal: 34.w,
-                vertical: 18.h,
-              ),
-              decoration: BoxDecoration(
-                color: focused
-                    ? _C.accent.withOpacity(0.16)
-                    : _C.accent.withOpacity(0.06),
-                borderRadius: BorderRadius.circular(36.r),
-                border: Border.all(
-                  color: _C.accent.withOpacity(focused ? 1 : 0.55),
-                  width: focused ? 2.5 : 1.5,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: _C.accent.withOpacity(focused ? 0.35 : 0.18),
-                    blurRadius: focused ? 30.r : 22.r,
-                  ),
-                ],
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.assignment_outlined,
-                    color: _C.accent,
-                    size: 22.sp,
-                  ),
-                  SizedBox(width: 12.w),
-                  Text(
-                    'FULL SCORECARD',
-                    style: TextStyle(
-                      color: _C.accent,
-                      fontSize: 17.sp,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 1.2.sp,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-
         SizedBox(height: 24.h),
-
-        // ── SPONSORED BANNER ─────────────────────────────────────────────
-        const _SponsoredBanner(),
       ],
     );
   }
@@ -2654,7 +2832,7 @@ class _TargetInfoBar extends StatelessWidget {
                   'TARGET $target',
                   style: TextStyle(
                     color: urgentColor,
-                    fontSize: 16.sp,
+                    fontSize: 20.sp,
                     fontWeight: FontWeight.w900,
                     letterSpacing: 1.2.sp,
                   ),
@@ -2701,7 +2879,7 @@ class _TargetStat extends StatelessWidget {
           '$label  ',
           style: TextStyle(
             color: Colors.white.withOpacity(0.3),
-            fontSize: 12.sp,
+            fontSize: 15.sp,
             fontWeight: FontWeight.w700,
             letterSpacing: 1.2.sp,
           ),
@@ -2710,7 +2888,7 @@ class _TargetStat extends StatelessWidget {
           value,
           style: TextStyle(
             color: color,
-            fontSize: 17.sp,
+            fontSize: 21.sp,
             fontWeight: FontWeight.w800,
           ),
         ),
@@ -2722,10 +2900,22 @@ class _TargetStat extends StatelessWidget {
 // ═══════════════════════════════════════════════════════════════════════════════
 // BATSMAN CARD
 // ═══════════════════════════════════════════════════════════════════════════════
+// UI UPDATE: added a clear on-strike (current striker) indicator — a
+// highlighted, bordered row with a glowing accent bar and a "STRIKE" chip,
+// plus a subtle pulse using the same pulseAnim already driving the LIVE
+// badge elsewhere on this screen. Sorting/data logic is unchanged.
+// ═══════════════════════════════════════════════════════════════════════════════
 class _BatsmenCard extends StatelessWidget {
   final String battingTeamName;
   final List<Map<String, dynamic>> batters;
-  const _BatsmenCard({required this.battingTeamName, required this.batters});
+  final bool isConnecting;
+  final Animation<double>? pulseAnim;
+  const _BatsmenCard({
+    required this.battingTeamName,
+    required this.batters,
+    this.isConnecting = false,
+    this.pulseAnim,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -2748,7 +2938,7 @@ class _BatsmenCard extends StatelessWidget {
                 'BATSMAN',
                 style: TextStyle(
                   color: _C.textDim,
-                  fontSize: 15.sp,
+                  fontSize: 19.sp,
                   fontWeight: FontWeight.w800,
                   letterSpacing: 2.sp,
                 ),
@@ -2761,7 +2951,7 @@ class _BatsmenCard extends StatelessWidget {
                   textAlign: TextAlign.right,
                   style: TextStyle(
                     color: _C.textDim,
-                    fontSize: 15.sp,
+                    fontSize: 19.sp,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
@@ -2774,7 +2964,7 @@ class _BatsmenCard extends StatelessWidget {
                   textAlign: TextAlign.right,
                   style: TextStyle(
                     color: _C.textDim,
-                    fontSize: 15.sp,
+                    fontSize: 19.sp,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
@@ -2784,10 +2974,15 @@ class _BatsmenCard extends StatelessWidget {
           SizedBox(height: 20.h),
           if (display.isEmpty)
             Text(
-              'Yet to bat',
+              // FIX (Bug 1): previously always "Yet to bat" — identical
+              // whether Firestore was still connecting or genuinely had no
+              // opener data yet. Now it reflects which one is true.
+              isConnecting
+                  ? 'Connecting to live feed…'
+                  : 'Match live — openers not yet recorded',
               style: TextStyle(
                 color: Colors.white.withOpacity(0.3),
-                fontSize: 17.sp,
+                fontSize: 20.sp,
               ),
             )
           else
@@ -2795,15 +2990,46 @@ class _BatsmenCard extends StatelessWidget {
               final name = (b['playerName'] ?? b['name'] ?? '').toString();
               final runs = b['runs'] ?? 0;
               final balls = b['ballsFaced'] ?? 0;
-              final onStrike = b['isOnStrike'] == true || b['onStrike'] == true;
+              final onStrike =
+                  b['isOnStrike'] == true || b['onStrike'] == true;
               final displayName = name.isEmpty
                   ? 'Unknown'
                   : (name.length > 18 ? '${name.substring(0, 18)}…' : name);
 
-              return Padding(
-                padding: EdgeInsets.only(bottom: 16.h),
+              final row = Container(
+                margin: EdgeInsets.only(bottom: 16.h),
+                padding: EdgeInsets.symmetric(
+                  horizontal: onStrike ? 14.w : 0,
+                  vertical: onStrike ? 10.h : 0,
+                ),
+                decoration: onStrike
+                    ? BoxDecoration(
+                  color: _C.accent.withOpacity(0.10),
+                  borderRadius: BorderRadius.circular(14.r),
+                  border: Border.all(
+                    color: _C.accent.withOpacity(0.45),
+                    width: 1.5,
+                  ),
+                )
+                    : null,
                 child: Row(
                   children: [
+                    if (onStrike)
+                      Container(
+                        width: 5.r,
+                        height: 30.r,
+                        margin: EdgeInsets.only(right: 12.w),
+                        decoration: BoxDecoration(
+                          color: _C.accent,
+                          borderRadius: BorderRadius.circular(3.r),
+                          boxShadow: [
+                            BoxShadow(
+                              color: _C.accent.withOpacity(0.6),
+                              blurRadius: 8.r,
+                            ),
+                          ],
+                        ),
+                      ),
                     Expanded(
                       child: Row(
                         children: [
@@ -2815,19 +3041,44 @@ class _BatsmenCard extends StatelessWidget {
                                 color: Colors.white.withOpacity(
                                   onStrike ? 1 : 0.55,
                                 ),
-                                fontSize: 21.sp,
+                                fontSize: 25.sp,
                                 fontWeight: onStrike
                                     ? FontWeight.w800
-                                    : FontWeight.w500,
+                                    : FontWeight.w600,
                               ),
                             ),
                           ),
                           if (onStrike) ...[
-                            SizedBox(width: 7.w),
-                            Icon(
-                              Icons.star_rounded,
-                              color: _C.accent,
-                              size: 20.sp,
+                            SizedBox(width: 8.w),
+                            Container(
+                              padding: EdgeInsets.symmetric(
+                                horizontal: 8.w,
+                                vertical: 3.h,
+                              ),
+                              decoration: BoxDecoration(
+                                color: _C.accent,
+                                borderRadius: BorderRadius.circular(6.r),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.sports_cricket,
+                                    color: _C.bg,
+                                    size: 12.sp,
+                                  ),
+                                  SizedBox(width: 4.w),
+                                  Text(
+                                    'STRIKE',
+                                    style: TextStyle(
+                                      color: _C.bg,
+                                      fontSize: 11.sp,
+                                      fontWeight: FontWeight.w900,
+                                      letterSpacing: 0.5.sp,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ],
                         ],
@@ -2840,7 +3091,7 @@ class _BatsmenCard extends StatelessWidget {
                         textAlign: TextAlign.right,
                         style: TextStyle(
                           color: Colors.white,
-                          fontSize: 21.sp,
+                          fontSize: 25.sp,
                           fontWeight: FontWeight.w800,
                         ),
                       ),
@@ -2853,14 +3104,26 @@ class _BatsmenCard extends StatelessWidget {
                         textAlign: TextAlign.right,
                         style: TextStyle(
                           color: Colors.white.withOpacity(0.5),
-                          fontSize: 19.sp,
-                          fontWeight: FontWeight.w500,
+                          fontSize: 23.sp,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                     ),
                   ],
                 ),
               );
+
+              if (onStrike && pulseAnim != null) {
+                return AnimatedBuilder(
+                  animation: pulseAnim!,
+                  builder: (_, child) => Opacity(
+                    opacity: 0.85 + 0.15 * pulseAnim!.value,
+                    child: child,
+                  ),
+                  child: row,
+                );
+              }
+              return row;
             }),
         ],
       ),
@@ -2874,7 +3137,12 @@ class _BatsmenCard extends StatelessWidget {
 class _BowlerCard extends StatelessWidget {
   final String bowlingTeamName;
   final Map<String, dynamic>? bowler;
-  const _BowlerCard({required this.bowlingTeamName, required this.bowler});
+  final bool isConnecting;
+  const _BowlerCard({
+    required this.bowlingTeamName,
+    required this.bowler,
+    this.isConnecting = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -2885,7 +3153,7 @@ class _BowlerCard extends StatelessWidget {
     final maidens = bowler?['maidens'] ?? 0;
     final bowlerOvers = bowler?['overs'] ?? 0;
     final bowlerDisplay = bowlerName.isEmpty
-        ? '—'
+        ? (isConnecting ? '…' : 'Yet to bowl')
         : (bowlerName.length > 18
         ? '${bowlerName.substring(0, 18)}…'
         : bowlerName);
@@ -2901,7 +3169,7 @@ class _BowlerCard extends StatelessWidget {
                 'BOWLER',
                 style: TextStyle(
                   color: _C.textDim,
-                  fontSize: 15.sp,
+                  fontSize: 19.sp,
                   fontWeight: FontWeight.w800,
                   letterSpacing: 2.sp,
                 ),
@@ -2927,7 +3195,7 @@ class _BowlerCard extends StatelessWidget {
                   maxLines: 2,
                   style: TextStyle(
                     color: Colors.white,
-                    fontSize: 21.sp,
+                    fontSize: 25.sp,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
@@ -2945,7 +3213,7 @@ class _BowlerCard extends StatelessWidget {
                   textAlign: TextAlign.right,
                   style: TextStyle(
                     color: _C.accent,
-                    fontSize: 26.sp,
+                    fontSize: 30.sp,
                     fontWeight: FontWeight.w900,
                   ),
                 ),
@@ -2964,7 +3232,7 @@ class _BowlerCard extends StatelessWidget {
       textAlign: TextAlign.right,
       style: TextStyle(
         color: _C.textDim,
-        fontSize: 15.sp,
+        fontSize: 19.sp,
         fontWeight: FontWeight.w800,
       ),
     ),
@@ -2977,7 +3245,7 @@ class _BowlerCard extends StatelessWidget {
       textAlign: TextAlign.right,
       style: TextStyle(
         color: Colors.white.withOpacity(0.6),
-        fontSize: 19.sp,
+        fontSize: 23.sp,
         fontWeight: FontWeight.w600,
       ),
     ),
@@ -2985,34 +3253,20 @@ class _BowlerCard extends StatelessWidget {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SPONSORED BANNER — decorative carousel, no D-pad interaction needed.
+// SIDE AD BANNER — vertical image carousel docked to the left/right edges
+// of the screen. Replaces the old bottom-of-page _SponsoredBanner. Same
+// 30-second auto-rotate cadence as before, just laid out vertically and
+// positioned at the screen edges instead of stacked at the bottom.
 // ═══════════════════════════════════════════════════════════════════════════════
-class _SponsoredBanner extends StatefulWidget {
-  const _SponsoredBanner();
+class _SideAdBanner extends StatefulWidget {
+  final List<String> images;
+  const _SideAdBanner({required this.images});
 
   @override
-  State<_SponsoredBanner> createState() => _SponsoredBannerState();
+  State<_SideAdBanner> createState() => _SideAdBannerState();
 }
 
-class _SponsoredBannerState extends State<_SponsoredBanner> {
-  static const List<Map<String, String>> _ads = [
-    {
-      'title': 'Get the best cricket gear — 20% off at Cricket Hub',
-      'cta': 'SHOP NOW',
-      'icon': 'bag',
-    },
-    {
-      'title': 'Live odds, updated every ball — BetXchange',
-      'cta': 'PLAY NOW',
-      'icon': 'chart',
-    },
-    {
-      'title': 'Stream every match in 4K — SportsFlix',
-      'cta': 'SUBSCRIBE',
-      'icon': 'play',
-    },
-  ];
-
+class _SideAdBannerState extends State<_SideAdBanner> {
   final PageController _pageController = PageController();
   Timer? _timer;
   int _index = 0;
@@ -3021,8 +3275,10 @@ class _SponsoredBannerState extends State<_SponsoredBanner> {
   void initState() {
     super.initState();
     _timer = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (!mounted || !_pageController.hasClients) return;
-      _index = (_index + 1) % _ads.length;
+      if (!mounted || !_pageController.hasClients || widget.images.isEmpty) {
+        return;
+      }
+      _index = (_index + 1) % widget.images.length;
       _pageController.animateToPage(
         _index,
         duration: const Duration(milliseconds: 600),
@@ -3038,125 +3294,49 @@ class _SponsoredBannerState extends State<_SponsoredBanner> {
     super.dispose();
   }
 
-  IconData _iconFor(String key) {
-    switch (key) {
-      case 'chart':
-        return Icons.show_chart_rounded;
-      case 'play':
-        return Icons.play_circle_outline_rounded;
-      case 'bag':
-      default:
-        return Icons.shopping_bag_outlined;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    return _CardShell(
-      padding: EdgeInsets.symmetric(horizontal: 26.w, vertical: 22.h),
-      child: SizedBox(
-        height: 84.h,
-        child: Stack(
-          children: [
-            PageView.builder(
+    if (widget.images.isEmpty) return const SizedBox.shrink();
+    return SizedBox(
+      width: 96.w,
+      height: 420.h,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20.r),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 20.r, sigmaY: 20.r),
+          child: Container(
+            padding: EdgeInsets.all(8.r),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Colors.white.withOpacity(0.06),
+                  _C.card.withOpacity(0.50),
+                ],
+              ),
+              borderRadius: BorderRadius.circular(20.r),
+              border: Border.all(color: Colors.white.withOpacity(0.10)),
+            ),
+            child: PageView.builder(
               controller: _pageController,
-              itemCount: _ads.length,
+              scrollDirection: Axis.vertical,
+              itemCount: widget.images.length,
               onPageChanged: (i) => setState(() => _index = i),
               itemBuilder: (context, i) {
-                final ad = _ads[i];
-                return Row(
-                  children: [
-                    Container(
-                      padding: EdgeInsets.all(13.r),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.06),
-                        borderRadius: BorderRadius.circular(13.r),
-                      ),
-                      child: Icon(
-                        _iconFor(ad['icon']!),
-                        color: Colors.white.withOpacity(0.5),
-                        size: 24.sp,
-                      ),
-                    ),
-                    SizedBox(width: 18.w),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            'SPONSORED',
-                            style: TextStyle(
-                              color: Colors.white.withOpacity(0.28),
-                              fontSize: 12.sp,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 1.5.sp,
-                            ),
-                          ),
-                          SizedBox(height: 4.h),
-                          Text(
-                            ad['title']!,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: Colors.white.withOpacity(0.75),
-                              fontSize: 17.sp,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    SizedBox(width: 16.w),
-                    Container(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: 20.w,
-                        vertical: 12.h,
-                      ),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(26.r),
-                        border: Border.all(
-                          color: Colors.white.withOpacity(0.18),
-                        ),
-                      ),
-                      child: Text(
-                        ad['cta']!,
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.7),
-                          fontSize: 14.sp,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0.6.sp,
-                        ),
-                      ),
-                    ),
-                  ],
+                return ClipRRect(
+                  borderRadius: BorderRadius.circular(14.r),
+                  child: Image.asset(
+                    widget.images[i],
+                    width: double.infinity,
+                    height: double.infinity,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                  ),
                 );
               },
             ),
-            Positioned(
-              bottom: 0,
-              left: 0,
-              right: 0,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(_ads.length, (i) {
-                  final active = i == _index;
-                  return AnimatedContainer(
-                    duration: const Duration(milliseconds: 250),
-                    margin: EdgeInsets.symmetric(horizontal: 4.w),
-                    width: active ? 18.w : 7.w,
-                    height: 7.h,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(4.r),
-                      color: active
-                          ? _C.accent
-                          : Colors.white.withOpacity(0.15),
-                    ),
-                  );
-                }),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -3241,7 +3421,7 @@ class _InningsBreakOverlay extends StatelessWidget {
                 'INNINGS BREAK',
                 style: TextStyle(
                   color: Colors.white.withOpacity(0.35),
-                  fontSize: 14.sp,
+                  fontSize: 17.sp,
                   fontWeight: FontWeight.w800,
                   letterSpacing: 5.sp,
                 ),
@@ -3252,7 +3432,7 @@ class _InningsBreakOverlay extends StatelessWidget {
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: Colors.white,
-                  fontSize: 32.sp,
+                  fontSize: 36.sp,
                   fontWeight: FontWeight.w800,
                   height: 1.2,
                   letterSpacing: -0.5.sp,
@@ -3277,7 +3457,7 @@ class _InningsBreakOverlay extends StatelessWidget {
                           : '1ST INNINGS SCORE',
                       style: TextStyle(
                         color: Colors.white.withOpacity(0.3),
-                        fontSize: 13.sp,
+                        fontSize: 16.sp,
                         fontWeight: FontWeight.w700,
                         letterSpacing: 2.5.sp,
                       ),
@@ -3292,7 +3472,7 @@ class _InningsBreakOverlay extends StatelessWidget {
                           '$firstInningsRuns',
                           style: TextStyle(
                             color: _C.orange,
-                            fontSize: 60.sp,
+                            fontSize: 66.sp,
                             fontWeight: FontWeight.w900,
                             height: 1,
                           ),
@@ -3301,7 +3481,7 @@ class _InningsBreakOverlay extends StatelessWidget {
                           '/$firstInningsWickets',
                           style: TextStyle(
                             color: Colors.white.withOpacity(0.65),
-                            fontSize: 34.sp,
+                            fontSize: 38.sp,
                             fontWeight: FontWeight.w700,
                           ),
                         ),
@@ -3330,7 +3510,7 @@ class _InningsBreakOverlay extends StatelessWidget {
                       'Target: ${firstInningsRuns + 1} runs',
                       style: TextStyle(
                         color: _C.gold,
-                        fontSize: 19.sp,
+                        fontSize: 23.sp,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
@@ -3396,7 +3576,7 @@ class _InningsBreakOverlay extends StatelessWidget {
                         'FULL SCORECARD',
                         style: TextStyle(
                           color: _C.accent,
-                          fontSize: 16.sp,
+                          fontSize: 19.sp,
                           fontWeight: FontWeight.w800,
                           letterSpacing: 1.2.sp,
                         ),
@@ -3426,7 +3606,7 @@ class _InningsBreakOverlay extends StatelessWidget {
                       'Waiting for 2nd innings…',
                       style: TextStyle(
                         color: Colors.white.withOpacity(0.28),
-                        fontSize: 17.sp,
+                        fontSize: 20.sp,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
@@ -3524,7 +3704,7 @@ class _MatchEndedDialog extends StatelessWidget {
                     'MATCH COMPLETE',
                     style: TextStyle(
                       color: _C.gold.withOpacity(0.55),
-                      fontSize: 10.sp,
+                      fontSize: 12.sp,
                       fontWeight: FontWeight.w800,
                       letterSpacing: 4.sp,
                     ),
@@ -3534,7 +3714,7 @@ class _MatchEndedDialog extends StatelessWidget {
                     'Match Ended',
                     style: TextStyle(
                       color: Colors.white,
-                      fontSize: 28.sp,
+                      fontSize: 32.sp,
                       fontWeight: FontWeight.w800,
                       letterSpacing: -0.5.sp,
                     ),
@@ -3555,7 +3735,7 @@ class _MatchEndedDialog extends StatelessWidget {
                       resultText,
                       style: TextStyle(
                         color: _C.orange,
-                        fontSize: 16.sp,
+                        fontSize: 19.sp,
                         fontWeight: FontWeight.w700,
                       ),
                       textAlign: TextAlign.center,
@@ -3566,7 +3746,7 @@ class _MatchEndedDialog extends StatelessWidget {
                     'What would you like to do?',
                     style: TextStyle(
                       color: Colors.white.withOpacity(0.3),
-                      fontSize: 13.sp,
+                      fontSize: 15.sp,
                     ),
                   ),
                   SizedBox(height: 24.h),
@@ -3604,7 +3784,7 @@ class _MatchEndedDialog extends StatelessWidget {
                               'View Match Summary',
                               style: TextStyle(
                                 color: _C.purple,
-                                fontSize: 15.sp,
+                                fontSize: 18.sp,
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
@@ -3651,7 +3831,7 @@ class _MatchEndedDialog extends StatelessWidget {
                             'Back to Tournament',
                             style: TextStyle(
                               color: Colors.white,
-                              fontSize: 15.sp,
+                              fontSize: 18.sp,
                               fontWeight: FontWeight.w700,
                               letterSpacing: 0.3.sp,
                             ),
@@ -3734,7 +3914,7 @@ class _PremiumForcedLogoutDialog extends StatelessWidget {
                   'Session Ended',
                   style: TextStyle(
                     color: Colors.white,
-                    fontSize: 26.sp,
+                    fontSize: 30.sp,
                     fontWeight: FontWeight.w800,
                     letterSpacing: -0.3.sp,
                   ),
@@ -3744,7 +3924,7 @@ class _PremiumForcedLogoutDialog extends StatelessWidget {
                   'You have been logged out remotely.\nRedirecting to login…',
                   style: TextStyle(
                     color: Colors.white.withOpacity(0.4),
-                    fontSize: 14.sp,
+                    fontSize: 16.sp,
                     height: 1.6,
                   ),
                   textAlign: TextAlign.center,
@@ -3884,7 +4064,7 @@ class _BallByBallTrackerState extends State<_BallByBallTracker> {
               'RECENT',
               style: TextStyle(
                 color: _C.textDim,
-                fontSize: 15.sp,
+                fontSize: 19.sp,
                 fontWeight: FontWeight.w800,
                 letterSpacing: 2.sp,
               ),
@@ -3902,7 +4082,7 @@ class _BallByBallTrackerState extends State<_BallByBallTracker> {
                 'No balls bowled yet this over',
                 style: TextStyle(
                   color: Colors.white.withOpacity(0.25),
-                  fontSize: 16.sp,
+                  fontSize: 19.sp,
                 ),
               )
                   : SingleChildScrollView(
@@ -3988,7 +4168,7 @@ class _BallChip extends StatelessWidget {
           label,
           style: TextStyle(
             color: isWicket ? Colors.white : col,
-            fontSize: (label.length > 1 ? 14 : 18).sp,
+            fontSize: (label.length > 1 ? 17 : 22).sp,
             fontWeight: FontWeight.w800,
             height: 1,
           ),

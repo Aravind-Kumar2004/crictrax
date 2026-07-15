@@ -104,8 +104,8 @@ class _StatCardState extends State<_StatCard> {
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
               colors: [
-                c.withOpacity(_focused ? 0.22 : 0.10),
-                _C.surfaceH.withOpacity(0.85),
+                c.withOpacity(_focused ? 0.50: 0.30),
+                _C.surfaceH.withOpacity(0.95),
               ],
             ),
             border: Border.all(

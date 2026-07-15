@@ -1,4 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../models/Player model.dart';
+import '../models/Team model.dart';
 import '../models/match_model.dart';
 
 class TournamentDetailRepository {
@@ -77,12 +79,7 @@ class TournamentDetailRepository {
 
         var isCompleted = data['isCompleted'] == true;
 
-        // ── FIX: fallback check — if match.isCompleted was never set by
-        // the mobile app, check whether the SECOND INNINGS document under
-        // this match reports isCompleted == true. If so, treat the whole
-        // match as completed for display purposes, even though the match
-        // doc itself is stale. This keeps Live/Completed tabs accurate
-        // without requiring an immediate mobile-app fix.
+
         if (!isCompleted) {
           final inningsSnap = await _db
               .collection('tournaments')
@@ -114,5 +111,29 @@ class TournamentDetailRepository {
 
       return results;
     });
+  }
+  Future<List<TeamModel>> getTournamentTeams(String tournamentId) async {
+    final snap = await _db
+        .collection('tournaments')
+        .doc(tournamentId)
+        .collection('teams')
+        .get();
+    return snap.docs.map((d) => TeamModel.fromMap(d.data(), d.id)).toList();
+  }
+  Future<Map<String, List<PlayerModel>>> getPlayersForTeams(List<String> teamIds) async {
+    if (teamIds.isEmpty) return {};
+    final grouped = <String, List<PlayerModel>>{};
+    for (var i = 0; i < teamIds.length; i += 10) {
+      final chunk = teamIds.sublist(i, i + 10 > teamIds.length ? teamIds.length : i + 10);
+      final snap = await _db
+          .collection('players')
+          .where('teamId', whereIn: chunk)
+          .get();
+      for (final d in snap.docs) {
+        final p = PlayerModel.fromMap(d.data(), d.id);
+        grouped.putIfAbsent(p.teamId, () => []).add(p);
+      }
+    }
+    return grouped;
   }
 }

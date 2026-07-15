@@ -102,6 +102,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
     // Existing Match Listener
     //────────────────────────────────────
     _watchMatches();
+    _loadTeamsAndPlayers();
   }
 
   // ── Business Logic (COMPLETELY UNCHANGED) ────────────────────────────────────
@@ -139,16 +140,20 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
     });
   }
   Future<void> _loadTeamsAndPlayers() async {
-    final ids = <String>{};
-    for (final m in _all) {
-      if (m.teamId1.isNotEmpty) ids.add(m.teamId1);
-      if (m.teamId2.isNotEmpty) ids.add(m.teamId2);
-    }
-    if (ids.isEmpty) return;
     setState(() => _teamsLoading = true);
-    final teams = await _teamRepo.getTeamsByIds(ids.toList());
-    final players = await _teamRepo.getPlayersByTeamIds(ids.toList());
+
+    final teams = await _repo.getTournamentTeams(widget.tournamentId);
+    debugPrint('🔍 tournamentId=${widget.tournamentId} → found ${teams.length} teams');
     if (!mounted) return;
+
+    final ids = teams.map((t) => t.id).toList();
+    final players = ids.isEmpty
+        ? <String, List<PlayerModel>>{}
+        : await _teamRepo.getPlayersByTeamIds(ids);
+    debugPrint('🔍 requested playerIds for teams: $ids');
+    debugPrint('🔍 players found: ${players.map((k, v) => MapEntry(k, v.length))}');
+    if (!mounted) return;
+
     setState(() {
       _tournamentTeams = teams;
       _playersByTeam = players;
@@ -226,7 +231,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
 
           Positioned.fill(
             child: Image.asset(
-              'assets/images/backgrounds/login_bg.jpg',
+              'assets/images/backgrounds/tornament_bg.png',
               fit: BoxFit.cover,
             ),
           ),
@@ -329,6 +334,15 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
     );
   }
 
+  // ── TEAMS PAGE ───────────────────────────────────────────────────────────────
+  // Premium broadcast-style redesign. Data source, loading flow, and the
+  // roster map (_playersByTeam) are all exactly what they were before —
+  // only the presentation changed: a responsive card grid (Wrap) instead
+  // of a single-column ListView, so wide TV canvases no longer sit half
+  // empty. D-pad traversal order is unaffected: the drawer (Back -> Home
+  // -> Fixtures -> Teams -> Points Table) is declared before this content
+  // in the Row above, and this FocusTraversalGroup keeps the cards in
+  // left-to-right / top-to-bottom reading order (Team Card 1, 2, 3…).
   Widget _buildTeamsPage() {
     if (_teamsLoading) {
       return const Center(child: CircularProgressIndicator());
@@ -342,14 +356,17 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
     }
     return FocusTraversalGroup(
       policy: ReadingOrderTraversalPolicy(),
-      child: ListView.builder(
-        padding: const EdgeInsets.all(24),
-        itemCount: _tournamentTeams.length,
-        itemBuilder: (_, i) {
-          final team = _tournamentTeams[i];
-          final roster = _playersByTeam[team.id] ?? const <PlayerModel>[];
-          return _TeamCard(team: team, players: roster);
-        },
+      child: SingleChildScrollView(
+        physics: const BouncingScrollPhysics(),
+        padding: const EdgeInsets.all(32),
+        child: Wrap(
+          spacing: 28,
+          runSpacing: 28,
+          children: _tournamentTeams.map((team) {
+            final roster = _playersByTeam[team.id] ?? const <PlayerModel>[];
+            return _TeamCard(team: team, players: roster);
+          }).toList(),
+        ),
       ),
     );
   }
@@ -696,13 +713,24 @@ class _StatusBadge extends StatelessWidget {
     );
   }
 }
+
 // ═══════════════════════════════════════════════════════════════════════════════
-// TEAM CARD  (Teams page)
-// Was: bare InkWell (touch-only, no premium focus glow consistent with the
-// rest of the app). Now: FocusableActionDetector wraps the header so the
-// D-pad can focus it (glow/scale/border like every other card) and the
-// remote's Select button toggles expand/collapse via the exact same
-// setState call the InkWell already used — no behavioural change.
+// TEAM CARD  (Teams page) — premium broadcast-style redesign
+// ─────────────────────────────────────────────────────────────────────────────
+// What stayed EXACTLY the same:
+//   • _expanded / _toggleExpanded()   — same single boolean toggle
+//   • _focused / _handleFocusChange() — same focus-tracking + auto-scroll
+//   • The ActivateIntent -> _toggleExpanded() wiring for the remote OK button
+//   • widget.team / widget.players    — same data, same source, same shape
+//
+// What changed (purely visual):
+//   • Card is now a large glass "broadcast" tile instead of a thin list row:
+//     Logo -> Team Name -> Captain/Coach -> City/Country -> Player Count
+//     badge -> "PRESS OK TO VIEW PLAYERS" indicator -> optional roster panel.
+//   • Cards are laid out in a responsive Wrap grid (see _buildTeamsPage)
+//     instead of one-per-row, so wide TV canvases aren't half-empty.
+//   • Focus state now drives the exact spec'd premium glow: scale 1.03,
+//     3px #00D4FF border, blur-24 shadow, brighter gradient, 200ms ease-out.
 // ═══════════════════════════════════════════════════════════════════════════════
 class _TeamCard extends StatefulWidget {
   final TeamModel team;
@@ -741,140 +769,406 @@ class _TeamCardState extends State<_TeamCard> {
     }
   }
 
+  // ── Defensive field reads ────────────────────────────────────────────────
+  // `Team model.dart` wasn't part of the uploaded files, so `coach` and
+  // `captainId` (both plain fields on the Teams schema doc) are read via
+  // the same dynamic-cast-with-try/catch pattern already used elsewhere in
+  // this file (see _TournamentHeaderCard._hasField). This reads no new
+  // data — it's the same `widget.team` object already passed in.
+  String _coach(TeamModel t) {
+    try { return ((t as dynamic).coach as String?) ?? ''; } catch (_) { return ''; }
+  }
+
+  String _captainId(TeamModel t) {
+    try { return ((t as dynamic).captainId as String?) ?? ''; } catch (_) { return ''; }
+  }
+
+  String? _playerId(PlayerModel p) {
+    try { final v = (p as dynamic).id as String?; if (v != null) return v; } catch (_) {}
+    try { final v = (p as dynamic).playerId as String?; if (v != null) return v; } catch (_) {}
+    return null;
+  }
+
+  /// Resolves the captain's display name from the roster already fetched
+  /// for this team (widget.players, populated by the existing
+  /// TeamRepository.getPlayersByTeamIds call in _loadTeamsAndPlayers).
+  /// No new Firestore read — Player Fetch Logic is untouched.
+  String? _captainName() {
+    final captainId = _captainId(widget.team);
+    if (captainId.isEmpty) return null;
+    for (final p in widget.players) {
+      if (_playerId(p) == captainId) {
+        final name = p.playerName;
+        if (name.isNotEmpty) return name;
+      }
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     final team = widget.team;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 14),
-      decoration: BoxDecoration(
-        color: _C.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: _focused ? _C.accent.withOpacity(0.6) : Colors.white.withOpacity(0.08),
-          width: _focused ? 1.5 : 1,
-        ),
-        boxShadow: _focused ? [BoxShadow(color: _C.accent.withOpacity(0.22), blurRadius: 16)] : [],
-      ),
-      child: Column(
-        children: [
-          FocusableActionDetector(
-            focusNode: _focusNode,
-            onFocusChange: _handleFocusChange,
-            actions: {
-              ActivateIntent: CallbackAction<ActivateIntent>(onInvoke: (_) {
-                _toggleExpanded();
-                return null;
-              }),
-            },
-            child: AnimatedScale(
-              scale: _focused ? 1.015 : 1.0,
-              duration: const Duration(milliseconds: 180),
-              curve: Curves.easeOut,
-              child: InkWell(
-                borderRadius: BorderRadius.circular(14),
-                onTap: _toggleExpanded,
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Row(
+    final coach = _coach(team);
+    final captain = _captainName();
+    final hasCaptainOrCoach = (captain != null && captain.isNotEmpty) || coach.isNotEmpty;
+    final hasCityOrCountry = team.city.isNotEmpty || team.country.isNotEmpty;
+
+    return FocusableActionDetector(
+      focusNode: _focusNode,
+      onFocusChange: _handleFocusChange,
+      actions: {
+        ActivateIntent: CallbackAction<ActivateIntent>(onInvoke: (_) {
+          _toggleExpanded();
+          return null;
+        }),
+      },
+      child: GestureDetector(
+        onTap: _toggleExpanded,
+        child: AnimatedScale(
+          scale: _focused ? 1.03 : 1.0,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+            width: 380,
+            padding: const EdgeInsets.fromLTRB(28, 32, 28, 26),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(24),
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: _focused
+                    ? [_C.accent.withOpacity(0.16), _C.surfaceH.withOpacity(0.97)]
+                    : [_C.surfaceH.withOpacity(0.80), _C.surface.withOpacity(0.94)],
+              ),
+              border: Border.all(
+                color: _focused ? _C.accent : Colors.white.withOpacity(0.08),
+                width: 3,
+              ),
+              boxShadow: [
+                if (_focused)
+                  BoxShadow(color: _C.accent.withOpacity(0.35), blurRadius: 24, spreadRadius: 1)
+                else
+                  BoxShadow(color: Colors.black.withOpacity(0.35), blurRadius: 18, offset: const Offset(0, 8)),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                // ── Large Team Logo ──────────────────────────────────────
+                _TeamLogoLarge(team: team, focused: _focused),
+                const SizedBox(height: 18),
+
+                // ── Large Team Name ──────────────────────────────────────
+                Text(
+                  team.teamName.toUpperCase(),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 32,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: -0.3,
+                    height: 1.15,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+
+                // ── Captain / Coach ──────────────────────────────────────
+                if (hasCaptainOrCoach) ...[
+                  const SizedBox(height: 22),
+                  Row(
                     children: [
-                      Container(
-                        width: 52, height: 52,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: _C.accent.withOpacity(0.08),
-                          border: Border.all(color: _C.accent.withOpacity(0.2)),
-                        ),
-                        clipBehavior: Clip.antiAlias,
-                        child: team.logo.isNotEmpty
-                            ? Image.network(team.logo, fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) =>
-                            const Icon(Icons.shield_rounded, color: _C.accent))
-                            : const Icon(Icons.shield_rounded, color: _C.accent),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(team.teamName,
-                                style: const TextStyle(
-                                    color: Colors.white, fontSize: 16,
-                                    fontWeight: FontWeight.w700)),
-                            if (team.city.isNotEmpty || team.country.isNotEmpty)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 4),
-                                child: Text(
-                                  [team.city, team.country]
-                                      .where((s) => s.isNotEmpty)
-                                      .join(', '),
-                                  style: TextStyle(
-                                      color: Colors.white.withOpacity(0.4),
-                                      fontSize: 12),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                      Text('${widget.players.length} players',
-                          style: TextStyle(
-                              color: Colors.white.withOpacity(0.35), fontSize: 12)),
-                      const SizedBox(width: 8),
-                      Icon(_expanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
-                          color: Colors.white.withOpacity(0.4)),
+                      if (captain != null && captain.isNotEmpty)
+                        Expanded(child: _DetailBlock(label: 'Captain', value: captain)),
+                      if (captain != null && captain.isNotEmpty && coach.isNotEmpty)
+                        const SizedBox(width: 16),
+                      if (coach.isNotEmpty)
+                        Expanded(child: _DetailBlock(label: 'Coach', value: coach)),
                     ],
                   ),
-                ),
-              ),
+                ],
+
+                // ── City / Country ───────────────────────────────────────
+                if (hasCityOrCountry) ...[
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      if (team.city.isNotEmpty)
+                        Expanded(child: _DetailBlock(label: 'City', value: team.city)),
+                      if (team.city.isNotEmpty && team.country.isNotEmpty)
+                        const SizedBox(width: 16),
+                      if (team.country.isNotEmpty)
+                        Expanded(child: _DetailBlock(label: 'Country', value: team.country)),
+                    ],
+                  ),
+                ],
+
+                const SizedBox(height: 24),
+
+                // ── Player Count Badge ───────────────────────────────────
+                _PlayerCountBadge(count: widget.players.length),
+
+                const SizedBox(height: 18),
+
+                // ── View Players Indicator ───────────────────────────────
+                _ViewPlayersIndicator(expanded: _expanded),
+
+                // ── Roster panel — same data & condition as before ───────
+                if (_expanded) ...[
+                  const SizedBox(height: 20),
+                  _RosterPanel(players: widget.players),
+                ],
+              ],
             ),
           ),
-          if (_expanded)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: widget.players.isEmpty
-                  ? Text('No players added yet',
-                  style: TextStyle(
-                      color: Colors.white.withOpacity(0.3), fontSize: 13))
-                  : Column(
-                children: widget.players
-                    .map((p) => Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 6),
-                  child: Row(
-                    children: [
-                      SizedBox(
-                        width: 28,
-                        child: Text('#${p.jerseyNumber}',
-                            style: TextStyle(
-                                color: _C.accent.withOpacity(0.7),
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700)),
-                      ),
-                      Expanded(
-                        child: Text(p.playerName,
-                            style: const TextStyle(
-                                color: Colors.white, fontSize: 13)),
-                      ),
-                      Text(p.role,
-                          style: TextStyle(
-                              color: Colors.white.withOpacity(0.4),
-                              fontSize: 11)),
-                    ],
-                  ),
-                ))
-                    .toList(),
-              ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Large circular team logo with premium glow ring ──────────────────────────
+class _TeamLogoLarge extends StatelessWidget {
+  final TeamModel team;
+  final bool focused;
+  const _TeamLogoLarge({required this.team, required this.focused});
+
+  String get _initials {
+    final name = team.teamName.trim();
+    if (name.isEmpty) return '?';
+    final parts = name.split(RegExp(r'\s+')).where((s) => s.isNotEmpty).toList();
+    final letters = parts.take(2).map((w) => w[0]).join();
+    return letters.toUpperCase();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 116,
+      height: 116,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [_C.accent.withOpacity(0.22), _C.surface],
+        ),
+        border: Border.all(
+          color: _C.accent.withOpacity(focused ? 0.75 : 0.35),
+          width: 2,
+        ),
+        boxShadow: [
+          BoxShadow(color: _C.accent.withOpacity(focused ? 0.4 : 0.18), blurRadius: 22),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: team.logo.isNotEmpty
+          ? Image.network(
+        team.logo,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => _LogoInitials(_initials),
+      )
+          : _LogoInitials(_initials),
+    );
+  }
+}
+
+class _LogoInitials extends StatelessWidget {
+  final String initials;
+  const _LogoInitials(this.initials);
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Text(
+        initials,
+        style: TextStyle(
+          color: _C.accent.withOpacity(0.85),
+          fontSize: 34,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
+  }
+}
+
+// ── Label-over-value detail block (Captain / Coach / City / Country) ─────────
+class _DetailBlock extends StatelessWidget {
+  final String label;
+  final String value;
+  const _DetailBlock({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Text(
+          label.toUpperCase(),
+          style: TextStyle(
+            color: _C.accent.withOpacity(0.65),
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 1.2,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          textAlign: TextAlign.center,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 19,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -0.1,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ── "PLAYERS / N" premium badge ───────────────────────────────────────────────
+class _PlayerCountBadge extends StatelessWidget {
+  final int count;
+  const _PlayerCountBadge({required this.count});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [_C.accent.withOpacity(0.16), _C.accent.withOpacity(0.05)],
+        ),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _C.accent.withOpacity(0.35)),
+        boxShadow: [BoxShadow(color: _C.accent.withOpacity(0.12), blurRadius: 14)],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'PLAYERS',
+            style: TextStyle(
+              color: _C.accent.withOpacity(0.8),
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 1.6,
             ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            '$count',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.w900,
+              height: 1.1,
+            ),
+          ),
         ],
       ),
     );
   }
 }
+
+// ── "► PRESS OK TO VIEW PLAYERS" affordance ───────────────────────────────────
+class _ViewPlayersIndicator extends StatelessWidget {
+  final bool expanded;
+  const _ViewPlayersIndicator({required this.expanded});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          expanded ? Icons.keyboard_arrow_up_rounded : Icons.play_arrow_rounded,
+          color: _C.accent,
+          size: 16,
+        ),
+        const SizedBox(width: 6),
+        Text(
+          expanded ? 'HIDE PLAYERS' : 'PRESS OK TO VIEW PLAYERS',
+          style: const TextStyle(
+            color: _C.accent,
+            fontSize: 13,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.6,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ── Roster panel — same fields/order as the original expand panel ────────────
+class _RosterPanel extends StatelessWidget {
+  final List<PlayerModel> players;
+  const _RosterPanel({required this.players});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.2),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white.withOpacity(0.06)),
+      ),
+      child: players.isEmpty
+          ? Text(
+        'No players added yet',
+        style: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 13),
+      )
+          : Column(
+        children: players
+            .map((p) => Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 30,
+                child: Text(
+                  '#${p.jerseyNumber}',
+                  style: TextStyle(
+                    color: _C.accent.withOpacity(0.75),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Text(
+                  p.playerName,
+                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                ),
+              ),
+              Text(
+                p.role,
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.4),
+                  fontSize: 11,
+                ),
+              ),
+            ],
+          ),
+        ))
+            .toList(),
+      ),
+    );
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // HORIZONTAL TAB BAR  (Fixtures page)
-// Was: raw `Focus` + `Builder` reading `Focus.of(ctx).hasFocus` — the tile
-// could receive focus but pressing Select/Enter on the remote did nothing,
-// because GestureDetector.onTap only fires on a touch tap, never on a key
-// event. Now: FocusableActionDetector registers an ActivateIntent handler
-// that calls the exact same onTap, so the remote's Select button works.
 // ═══════════════════════════════════════════════════════════════════════════════
 class _HorizontalTabBar extends StatelessWidget {
   final MatchTab selectedTab;

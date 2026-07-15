@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../../match_detail/data/repositories/match_detail_repository.dart';
 
 // ─── Design Tokens ────────────────────────────────────────────────────────────
@@ -15,6 +16,8 @@ class _C {
   static const purple    = Color(0xFF8E5CFF);
   static const success   = Color(0xFF00E676);
   static const danger    = Color(0xFFFF3D3D);
+  // Standardized TV focus-highlight color (matches remote focus spec).
+  static const focusGlow = Color(0xFF00D4FF);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -51,11 +54,26 @@ class _InningsCardWidgetState extends State<InningsCardWidget> {
   List<Map<String, dynamic>> _bowlers = [];
   bool _loading = true;
 
+  // ── TV D-Pad Focus (navigation-only, no business logic) ─────────────────────
+  // Each card owns its own FocusNode so it can receive D-pad focus
+  // independently. Lifecycle is scoped to this State object and disposed
+  // in dispose() below. Only a local setState is triggered on focus
+  // change, so focusing a card never rebuilds the rest of the screen.
+  late final FocusNode _focusNode =
+  FocusNode(debugLabel: 'InningsCard-${widget.inningsId}');
+  bool _focused = false;
+
   // ── Business Logic (COMPLETELY UNCHANGED) ───────────────────────────────────
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -100,6 +118,11 @@ class _InningsCardWidgetState extends State<InningsCardWidget> {
     return '$comp.$rem';
   }
 
+  void _onFocusChange(bool focused) {
+    // Local setState only — rebuilds just this card, not the screen.
+    if (mounted) setState(() => _focused = focused);
+  }
+
   // ── Build ───────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
@@ -108,7 +131,7 @@ class _InningsCardWidgetState extends State<InningsCardWidget> {
     final isSecond    = widget.innData['isSecondInnings'] == true;
     final innLabel    = 'Innings ${widget.inningsNumber}';
 
-    return ClipRRect(
+    final cardContent = ClipRRect(
       borderRadius: BorderRadius.circular(22),
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
@@ -163,6 +186,63 @@ class _InningsCardWidgetState extends State<InningsCardWidget> {
               ],
             ],
           ),
+        ),
+      ),
+    );
+
+    // ── TV Focus wrapper ────────────────────────────────────────────────────
+    // FocusableActionDetector makes the whole card individually focusable
+    // and wires up the remote OK button (DPAD_CENTER / Enter / gamepad A)
+    // to ActivateIntent. The card has no existing onTap in the original
+    // design, so activating it simply confirms focus (no new navigation
+    // behavior is introduced) — the visual highlight below is the feedback.
+    //
+    // Border width stays constant (3px, transparent when unfocused) so the
+    // layout box never changes size on focus — only color/shadow/scale
+    // change, keeping the animation cheap and GPU-friendly with no reflow
+    // of sibling cards.
+    return FocusableActionDetector(
+      focusNode: _focusNode,
+      onFocusChange: _onFocusChange,
+      actions: <Type, Action<Intent>>{
+        ActivateIntent: CallbackAction<ActivateIntent>(
+          onInvoke: (intent) {
+            // No existing tap/navigation action exists for the innings
+            // card in the original design, so there is nothing to invoke
+            // here — focus highlight is the only feedback, per spec.
+            return null;
+          },
+        ),
+      },
+      shortcuts: const <ShortcutActivator, Intent>{
+        SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
+        SingleActivator(LogicalKeyboardKey.select): ActivateIntent(),
+        SingleActivator(LogicalKeyboardKey.gameButtonA): ActivateIntent(),
+      },
+      child: AnimatedScale(
+        scale: _focused ? 1.04 : 1.0,
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(
+              color: _focused ? _C.focusGlow : Colors.transparent,
+              width: 3,
+            ),
+            boxShadow: _focused
+                ? [
+              BoxShadow(
+                color: _C.focusGlow.withOpacity(0.45),
+                blurRadius: 24,
+                spreadRadius: 1,
+              ),
+            ]
+                : [],
+          ),
+          child: cardContent,
         ),
       ),
     );

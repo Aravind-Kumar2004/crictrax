@@ -1236,8 +1236,8 @@ class _SideNavRailState extends State<_SideNavRail> {
 
   static const _items = [
     (icon: Icons.home_rounded, label: 'Home'),
-    (icon: Icons.emoji_events_rounded, label: 'Events'),
-    (icon: Icons.play_circle_fill_rounded, label: 'Live'),
+    (icon: Icons.emoji_events_rounded, label: 'Quick Match'),
+    // (icon: Icons.play_circle_fill_rounded, label: 'Live'),
     (icon: Icons.settings_rounded, label: 'Settings'),
   ];
 

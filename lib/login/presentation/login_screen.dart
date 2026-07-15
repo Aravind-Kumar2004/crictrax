@@ -498,6 +498,19 @@ class _Footer extends StatelessWidget {
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TV QR SECTION — all business logic COMPLETELY UNCHANGED
+//
+// SIZING FIX ONLY:
+//   • `build()` computes a single `cardHeight` (was previously named
+//     `loadingCardHeight` and only ever reached the loading state).
+//   • `_buildContent` now threads that same `cardHeight` into all four
+//     state builders instead of just `_buildLoadingState`.
+//   • `_buildQrCard`, `_buildLinkingState`, and `_buildExpiredState` each
+//     gained a `cardHeight` parameter and now set `height: cardHeight` on
+//     their outer Container — previously two of them referenced an
+//     out-of-scope variable (a compile error) and the third never set a
+//     height at all, which is why the card visibly resized between states.
+// No session creation, QR generation, countdown timer, navigation, or
+// animation logic was touched.
 // ═══════════════════════════════════════════════════════════════════════════════
 class TvQrSection extends StatefulWidget {
   final Animation<double> glowAnim;
@@ -651,30 +664,32 @@ class _TvQrSectionState extends State<TvQrSection>
   @override
   Widget build(BuildContext context) {
     // ── Responsive sizing (relative to actual screen, clamped so it never
-    //    balloons on TV panels reporting large logical sizes) ───────────────
+    //    balloons on TV panels reporting large logical sizes). `cardHeight`
+    //    is now the single source of truth for every state's outer card. ───
     final screenSize = MediaQuery.of(context).size;
     final cardWidth = (screenSize.width * 0.24).clamp(320.0, 520.0);
     final qrSize = (screenSize.width * 0.11).clamp(140.0, 190.0);
-    final loadingCardHeight = (screenSize.height * 0.24).clamp(160.0, 200.0);
+    final cardHeight = (screenSize.height * 0.48).clamp(300.0, 400.0);
 
     return AnimatedSwitcher(
       duration: const Duration(milliseconds: 400),
       switchInCurve: Curves.easeOut,
       switchOutCurve: Curves.easeIn,
-      child: _buildContent(context, cardWidth, qrSize, loadingCardHeight),
+      child: _buildContent(context, cardWidth, qrSize, cardHeight),
     );
   }
 
   Widget _buildContent(BuildContext context, double cardWidth, double qrSize,
-      double loadingCardHeight) {
-    if (_linking) return _buildLinkingState(context, cardWidth);
-    if (_expired) return _buildExpiredState(context, cardWidth);
-    if (_qrData == null) return _buildLoadingState(cardWidth, loadingCardHeight);
-    return _buildQrCard(context, cardWidth, qrSize);
+      double cardHeight) {
+    if (_linking) return _buildLinkingState(context, cardWidth, cardHeight);
+    if (_expired) return _buildExpiredState(context, cardWidth, cardHeight);
+    if (_qrData == null) return _buildLoadingState(cardWidth, cardHeight);
+    return _buildQrCard(context, cardWidth, qrSize, cardHeight);
   }
 
   // ── QR Glass Card ─────────────────────────────────────────────────────────
-  Widget _buildQrCard(BuildContext context, double cardWidth, double qrSize) {
+  Widget _buildQrCard(
+      BuildContext context, double cardWidth, double qrSize, double cardHeight) {
     final s = _tvScale(context);
     final mins =
     (_secondsLeft ~/ 60).toString().padLeft(2, '0');
@@ -710,6 +725,7 @@ class _TvQrSectionState extends State<TvQrSection>
           filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
           child: Container(
             width: cardWidth,
+            height: cardHeight,
             padding: const EdgeInsets.fromLTRB(24, 20, 24, 22),
             decoration: BoxDecoration(
               color: Colors.white.withOpacity(0.07),
@@ -826,7 +842,8 @@ class _TvQrSectionState extends State<TvQrSection>
   }
 
   // ── Linking State ─────────────────────────────────────────────────────────
-  Widget _buildLinkingState(BuildContext context, double cardWidth) {
+  Widget _buildLinkingState(
+      BuildContext context, double cardWidth, double cardHeight) {
     final s = _tvScale(context);
     return ClipRRect(
       borderRadius: BorderRadius.circular(28),
@@ -835,6 +852,7 @@ class _TvQrSectionState extends State<TvQrSection>
         child: Container(
           key: const ValueKey('linking'),
           width: cardWidth,
+          height: cardHeight,
           padding: const EdgeInsets.symmetric(
               horizontal: 40, vertical: 48),
           decoration: BoxDecoration(
@@ -909,7 +927,8 @@ class _TvQrSectionState extends State<TvQrSection>
   }
 
   // ── Expired State ─────────────────────────────────────────────────────────
-  Widget _buildExpiredState(BuildContext context, double cardWidth) {
+  Widget _buildExpiredState(
+      BuildContext context, double cardWidth, double cardHeight) {
     final s = _tvScale(context);
     return ClipRRect(
       borderRadius: BorderRadius.circular(28),
@@ -918,6 +937,7 @@ class _TvQrSectionState extends State<TvQrSection>
         child: Container(
           key: const ValueKey('expired'),
           width: cardWidth,
+          height: cardHeight,
           padding: const EdgeInsets.symmetric(
               horizontal: 40, vertical: 48),
           decoration: BoxDecoration(

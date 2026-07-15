@@ -12,6 +12,7 @@ class AdSlide {
   final Color accentColor;
   final IconData icon;
   final String? imagePath;
+  final bool fullImage;
 
   const AdSlide({
     required this.headline,
@@ -21,6 +22,7 @@ class AdSlide {
     required this.accentColor,
     required this.icon,
     this.imagePath,
+    this.fullImage = false,
   });
 }
 
@@ -114,6 +116,63 @@ class _AdBannerWidgetState extends State<AdBannerWidget>
       icon: Icons.bolt_rounded,
       imagePath: 'assets/images/ad_4.jpg',
     ),
+
+    AdSlide(
+      headline: 'Decathlon',
+      description: 'the ultimate track and field test of speed, strength, and endurance',
+      features: [
+        'Hiking',
+        'Sports',
+        'Fitness'
+      ],
+
+      ctaLabel: 'Grab Yours',
+      accentColor: Color(0xFF002D91),
+      icon: Icons.shop_2_rounded,
+      imagePath: 'assets/images/ad_1.png',
+    ),
+
+    AdSlide(
+      headline: 'Revolt Energy',
+      description: 'Fuel your game with instant energy, focus, and endurance for every match.',
+      features: [
+        'Instant Energy',
+        'Electrolytes',
+        'Zero Crash',
+      ],
+      ctaLabel: 'Power Up',
+      accentColor: const Color(0xFFAEFF34),
+      icon: Icons.bolt_rounded,
+      imagePath: 'assets/images/ad2.png',
+    ),
+
+    AdSlide(
+      headline: 'Nexo Physio',
+      description: 'Professional sports physiotherapy and rehabilitation to keep athletes match-ready.',
+      features: [
+        'Sports Injury',
+        'Rehabilitation',
+        'Recovery',
+      ],
+      ctaLabel: 'Book Now',
+      accentColor: const Color(0xFF888888),
+      icon: Icons.medical_services_rounded,
+      imagePath: 'assets/images/ad3.png',
+    ),
+
+    AdSlide(
+      headline: 'Zepto',
+      description: 'Groceries, snacks, drinks, and essentials delivered to your doorstep in minutes.',
+      features: [
+        '10-Min Delivery',
+        'Fresh Grocery',
+        'Best Deals',
+      ],
+      ctaLabel: 'Shop Now',
+      accentColor: const Color(0xFF8E24AA),
+      icon: Icons.shopping_bag_rounded,
+      imagePath: 'assets/images/ad4.png',
+    ),
   ];
 
   List<AdSlide> get _slides => widget.slides ?? _demoSlides;
@@ -179,6 +238,7 @@ class _AdBannerWidgetState extends State<AdBannerWidget>
 
   @override
   Widget build(BuildContext context) {
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -292,6 +352,15 @@ class _AdSlideCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (slide.fullImage) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child:Image.asset(
+          slide.imagePath!,
+          fit: BoxFit.fill,
+        )
+      );
+    }
     final hasImage = slide.imagePath != null;
 
     return Container(
