@@ -490,7 +490,7 @@ class _AdSlideCard extends StatelessWidget {
         // landscape) since the panel's own bounds are fixed by the flex.
         Image.asset(
           slide.imagePath!,
-          fit: BoxFit.cover,
+          fit: BoxFit.fill,
           alignment: Alignment.center,
           errorBuilder: (_, __, ___) => _buildImageFallback(),
         ),

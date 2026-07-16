@@ -11,7 +11,7 @@ class BackgroundMusicService {
   bool _started = false;
 
   Future<void> startMusic() async {
-    if (_started) return; // Prevent starting multiple times
+    if (_started) return;
 
     await player.setAudioSource(
       ConcatenatingAudioSource(
@@ -23,12 +23,22 @@ class BackgroundMusicService {
     );
 
     await player.setLoopMode(LoopMode.all);
-
-    await player.setVolume(0.10); // 20% volume (recommended)
+    await player.setVolume(0.10);
 
     _started = true;
-
     await player.play();
+  }
+
+  Future<void> pauseMusic() async {
+    if (player.playing) {
+      await player.pause();
+    }
+  }
+
+  Future<void> resumeMusic() async {
+    if (_started && !player.playing) {
+      await player.play();
+    }
   }
 
   Future<void> stopMusic() async {

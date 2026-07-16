@@ -5,6 +5,7 @@ import 'package:crictrax/login/presentation/login_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import '../../services/background_music_service.dart';
 import '../../services/commentary_audio_service.dart';
 import '../data/models/repositories/live_score_repository.dart';
 
@@ -69,6 +70,7 @@ class _DpadFocusableState extends State<_DpadFocusable> {
   bool _isFocused = false;
 
   FocusNode get _node => widget.focusNode ?? (_ownedNode ??= FocusNode());
+
 
   @override
   void dispose() {
@@ -163,11 +165,18 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
   @override
   void initState() {
     super.initState();
+
+    BackgroundMusicService.instance.pauseMusic();
+
     _pulseCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1400),
     )..repeat(reverse: true);
-    _pulseAnim = CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut);
+
+    _pulseAnim = CurvedAnimation(
+      parent: _pulseCtrl,
+      curve: Curves.easeInOut,
+    );
 
     _initMatchSubscription();
     _inningsStream = _repo.watchInnings(widget.tournamentId, widget.matchId);
@@ -476,30 +485,30 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
             // banner. Shown as two vertical carousels docked to the left
             // and right edges of the screen. Hidden on narrow widths so
             // they don't crowd a phone-sized layout. ─────────────────────
-            if (MediaQuery.of(context).size.width >= 1000)
+
               Positioned(
-                left: 16.w,
+                left:50,
                 top: 0,
                 bottom: 0,
                 child: Center(
                   child: _SideAdBanner(
                     images: const [
-                      'assets/images/ad_banner_1.png',
-                      'assets/images/ad_banner_3.png',
+                      'assets/images/adds_left_1.png',
+                      'assets/images/adds_left_2.png',
                     ],
                   ),
                 ),
               ),
-            if (MediaQuery.of(context).size.width >= 1000)
+
               Positioned(
-                right: 16.w,
+                right: 50,
                 top: 0,
                 bottom: 0,
                 child: Center(
                   child: _SideAdBanner(
                     images: const [
-                      'assets/images/ad_banner2.png',
-                      'assets/images/ad_banner_3.png',
+                      'assets/images/adds_left_2.png',
+                      'assets/images/adds_left_1.png',
                     ],
                   ),
                 ),
@@ -1057,14 +1066,48 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Text(
-                                  '${widget.team1Name} vs ${widget.team2Name}',
-                                  // ENLARGED: 20.sp → 30.sp
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 30.sp,
-                                    fontWeight: FontWeight.w800,
-                                  ),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        widget.team1Name,
+                                        textAlign: TextAlign.left,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 30.sp,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                    ),
+
+                                    Padding(
+                                      padding: EdgeInsets.symmetric(horizontal: 16.w),
+                                      child: Text(
+                                        'VS',
+                                        style: TextStyle(
+                                          color: _C.orange,
+                                          fontSize: 28.sp,
+                                          fontWeight: FontWeight.w900,
+                                        ),
+                                      ),
+                                    ),
+
+                                    Expanded(
+                                      child: Text(
+                                        widget.team2Name,
+                                        textAlign: TextAlign.right,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 30.sp,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                                 SizedBox(height: 4.h),
                                 Text(
@@ -2492,23 +2535,7 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
     );
   }
 
-  // ── Visual layer, ScreenUtil-scaled ─────────────────────────────────────────
-  // ═══════════════════════════════════════════════════════════════════
-  // UI UPDATE (per latest request):
-  //  1. Bottom sponsored banner removed from here entirely — replaced by
-  //     the two _SideAdBanner widgets docked to the screen edges in
-  //     LiveScoreScreen.build().
-  //  2. Score digits enlarged (100.sp → 132.sp) for far-distance
-  //     readability; the overs/CRR pill and the FULL SCORECARD button now
-  //     sit together directly under the score inside the same header
-  //     card, instead of overs/CRR alone up top and the scorecard button
-  //     as a separate element down at the bottom of the page.
-  //  3. Target/runs-needed/balls-remaining bar (_TargetInfoBar) kept as
-  //     its own row directly below that pill/button row, still inside the
-  //     header card — just repositioned as part of the same reshuffle.
-  //  4. FULL SCORECARD button: same onTap/navigation, same
-  //     _MatchSummaryScreen push — only its position changed.
-  // No stream, Firestore, or state logic touched below.
+
   // ═══════════════════════════════════════════════════════════════════
   Widget _buildBroadcastPanel({
     required BuildContext context,
@@ -2560,184 +2587,163 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
               ),
               SizedBox(height: 26.h),
               // ── BIG SCORE (enlarged: 100.sp → 132.sp) ───────────────
-              Center(
-                child: RichText(
-                  text: TextSpan(
-                    children: [
-                      TextSpan(
-                        text: '$totalRuns',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 132.sp,
-                          fontWeight: FontWeight.w900,
-                          height: 1,
-                          letterSpacing: -2.sp,
-                        ),
-                      ),
-                      TextSpan(
-                        text: '/$totalWickets',
-                        style: TextStyle(
-                          color: _C.accent,
-                          fontSize: 132.sp,
-                          fontWeight: FontWeight.w900,
-                          height: 1,
-                          letterSpacing: -2.sp,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              SizedBox(height: 22.h),
-              // ── OVERS / CRR pill + FULL SCORECARD (moved up here from
-              // the bottom of the page; same onTap/navigation) ──────────
-              Wrap(
-                alignment: WrapAlignment.center,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                spacing: 14.w,
-                runSpacing: 12.h,
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  Container(
-                    padding: EdgeInsets.symmetric(
-                      horizontal: 26.w,
-                      vertical: 12.h,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.04),
-                      borderRadius: BorderRadius.circular(36.r),
-                      border: Border.all(
-                        color: Colors.white.withOpacity(0.08),
-                      ),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
+
+                  // Team 1 Logo
+                  Image.asset(
+                    'assets/images/logo2.png',
+                    width: 200.w,
+                    height: 200.w,
+                    fit: BoxFit.contain,
+                  ),
+
+                  SizedBox(width: 180.w),
+
+                  RichText(
+                    text: TextSpan(
                       children: [
-                        Text(
-                          '$oversDisplay',
-                          style: TextStyle(
-                            color: _C.accent,
-                            fontSize: 24.sp,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        SizedBox(width: 8.w),
-                        Text(
-                          'OVERS',
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.35),
-                            fontSize: 17.sp,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 1.2.sp,
-                          ),
-                        ),
-                        SizedBox(width: 16.w),
-                        Container(
-                          width: 5.r,
-                          height: 5.r,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: _C.accent.withOpacity(0.6),
-                          ),
-                        ),
-                        SizedBox(width: 16.w),
-                        Text(
-                          'CRR:',
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.35),
-                            fontSize: 17.sp,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 1.2.sp,
-                          ),
-                        ),
-                        SizedBox(width: 8.w),
-                        Text(
-                          crrStr,
+                        TextSpan(
+                          text: '$totalRuns',
                           style: TextStyle(
                             color: Colors.white,
-                            fontSize: 24.sp,
-                            fontWeight: FontWeight.w800,
+                            fontSize: 132.sp,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        TextSpan(
+                          text: '/$totalWickets',
+                          style: TextStyle(
+                            color: _C.accent,
+                            fontSize: 95.sp,
+                            fontWeight: FontWeight.w900,
                           ),
                         ),
                       ],
                     ),
                   ),
-                  // ── FULL SCORECARD BUTTON — same onTap/navigation as
-                  // before, only its position changed (was a standalone
-                  // Center() block at the bottom of the page). ──────────
-                  _DpadFocusable(
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => _MatchSummaryScreen(
-                            tournamentId: widget.tournamentId,
-                            matchId: widget.matchId,
-                            team1Name: widget.team1Name,
-                            team2Name: widget.team2Name,
-                            resultText: 'Live',
-                            repo: widget.repo,
+
+                  SizedBox(width: 180.w),
+
+                  // Team 2 Logo
+                  Image.asset(
+                    'assets/images/logo1.png',
+                    width: 200.w,
+                    height: 200.w,
+                    fit: BoxFit.contain,
+                  ),
+                ],
+              ),
+              SizedBox(height: 22.h),
+
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+
+                  Expanded(
+                    child: target != null && runsNeeded != null
+                        ? Align(
+                      alignment: Alignment.centerLeft,
+                      child: _TargetInfoBar(
+                        target: target,
+                        runsNeeded: runsNeeded,
+                        ballsRemaining: ballsRemaining,
+                        oversRemaining: oversRemaining,
+                        rrr: rrr != null
+                            ? rrr.toStringAsFixed(2)
+                            : null,
+                        pulseAnim: widget.pulseAnim,
+                      ),
+                    )
+                        : const SizedBox(),
+                  ),
+
+                  // CENTER : OVERS
+                  Expanded(
+                    child: Center(
+                      child: Container(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 24.w,
+                          vertical: 12.h,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.06),
+                          borderRadius: BorderRadius.circular(30.r),
+                        ),
+                        child: Text(
+                          '${oversDisplay.toString()} OVERS • CRR $crrStr',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18.sp,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
-                      );
-                    },
-                    builder: (context, focused) => AnimatedContainer(
-                      duration: const Duration(milliseconds: 150),
-                      padding: EdgeInsets.symmetric(
-                        horizontal: 22.w,
-                        vertical: 12.h,
                       ),
-                      decoration: BoxDecoration(
-                        color: focused
-                            ? _C.accent.withOpacity(0.16)
-                            : _C.accent.withOpacity(0.06),
-                        borderRadius: BorderRadius.circular(36.r),
-                        border: Border.all(
-                          color: _C.accent.withOpacity(focused ? 1 : 0.55),
-                          width: focused ? 2.5 : 1.5,
+                    ),
+                  ),
+
+                  // RIGHT : SCORECARD
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: _DpadFocusable(
+                        onTap: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => _MatchSummaryScreen(
+                                tournamentId: widget.tournamentId,
+                                matchId: widget.matchId,
+                                team1Name: widget.team1Name,
+                                team2Name: widget.team2Name,
+                                resultText: 'Live',
+                                repo: widget.repo,
+                              ),
+                            ),
+                          );
+                        },
+                        builder: (context, focused) => AnimatedContainer(
+                          duration: const Duration(milliseconds: 150),
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 28.w,
+                            vertical: 16.h,
+                          ),
+                          decoration: BoxDecoration(
+                            color: focused
+                                ? _C.accent.withOpacity(0.16)
+                                : _C.accent.withOpacity(0.06),
+                            borderRadius: BorderRadius.circular(32.r),
+                            border: Border.all(
+                              color: _C.accent.withOpacity(focused ? 1 : 0.5),
+                              width: focused ? 2.5 : 1.5,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.assignment_outlined,
+                                color: _C.accent,
+                                size: 18.sp,
+                              ),
+                              SizedBox(width: 10.w),
+                              Text(
+                                'FULL SCORECARD',
+                                style: TextStyle(
+                                  color: _C.accent,
+                                  fontSize: 18.sp,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: _C.accent.withOpacity(
-                              focused ? 0.35 : 0.18,
-                            ),
-                            blurRadius: focused ? 24.r : 16.r,
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.assignment_outlined,
-                            color: _C.accent,
-                            size: 18.sp,
-                          ),
-                          SizedBox(width: 8.w),
-                          Text(
-                            'FULL SCORECARD',
-                            style: TextStyle(
-                              color: _C.accent,
-                              fontSize: 16.sp,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 1.sp,
-                            ),
-                          ),
-                        ],
                       ),
                     ),
                   ),
                 ],
               ),
-              if (target != null && runsNeeded != null) ...[
-                SizedBox(height: 20.h),
-                _TargetInfoBar(
-                  target: target,
-                  runsNeeded: runsNeeded,
-                  ballsRemaining: ballsRemaining,
-                  oversRemaining: oversRemaining,
-                  rrr: rrr != null ? rrr.toStringAsFixed(2) : null,
-                  pulseAnim: widget.pulseAnim,
-                ),
-              ],
             ],
           ),
         ),
@@ -2811,22 +2817,31 @@ class _TargetInfoBar extends StatelessWidget {
     return AnimatedBuilder(
       animation: pulseAnim,
       builder: (_, __) => Container(
+        width: double.infinity,
         padding: EdgeInsets.symmetric(horizontal: 24.w, vertical: 14.h),
         decoration: BoxDecoration(
           color: urgentColor.withOpacity(0.07),
           borderRadius: BorderRadius.circular(18.r),
-          border: Border.all(color: urgentColor.withOpacity(0.25)),
+          border: Border.all(
+            color: urgentColor.withOpacity(0.25),
+          ),
         ),
+
         child: Wrap(
-          alignment: WrapAlignment.center,
+          alignment: WrapAlignment.start,
           crossAxisAlignment: WrapCrossAlignment.center,
           spacing: 24.w,
           runSpacing: 8.h,
           children: [
+
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.flag_rounded, color: urgentColor, size: 18.sp),
+                Icon(
+                  Icons.flag_rounded,
+                  color: urgentColor,
+                  size: 18.sp,
+                ),
                 SizedBox(width: 8.w),
                 Text(
                   'TARGET $target',
@@ -2834,24 +2849,30 @@ class _TargetInfoBar extends StatelessWidget {
                     color: urgentColor,
                     fontSize: 20.sp,
                     fontWeight: FontWeight.w900,
-                    letterSpacing: 1.2.sp,
                   ),
                 ),
               ],
             ),
+
             _TargetStat(
               label: 'NEED',
               value: '$runsNeeded runs',
               color: _C.orange,
             ),
+
             if (ballsRemaining != null)
               _TargetStat(
                 label: 'FROM',
                 value: '$ballsRemaining balls',
-                color: Colors.white.withOpacity(0.6),
+                color: Colors.white70,
               ),
+
             if (rrr != null)
-              _TargetStat(label: 'RRR', value: rrr!, color: _C.warning),
+              _TargetStat(
+                label: 'RRR',
+                value: rrr!,
+                color: _C.warning,
+              ),
           ],
         ),
       ),
@@ -3298,43 +3319,42 @@ class _SideAdBannerState extends State<_SideAdBanner> {
   Widget build(BuildContext context) {
     if (widget.images.isEmpty) return const SizedBox.shrink();
     return SizedBox(
-      width: 96.w,
-      height: 420.h,
+      width: 200.w,
+      height: 500.h,
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(20.r),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 20.r, sigmaY: 20.r),
-          child: Container(
-            padding: EdgeInsets.all(8.r),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Colors.white.withOpacity(0.06),
-                  _C.card.withOpacity(0.50),
-                ],
-              ),
-              borderRadius: BorderRadius.circular(20.r),
-              border: Border.all(color: Colors.white.withOpacity(0.10)),
+        borderRadius: BorderRadius.circular(24.r),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.45),
+            borderRadius: BorderRadius.circular(24.r),
+            border: Border.all(
+              color: _C.accent.withOpacity(0.7),
+              width: 2,
             ),
-            child: PageView.builder(
-              controller: _pageController,
-              scrollDirection: Axis.vertical,
-              itemCount: widget.images.length,
-              onPageChanged: (i) => setState(() => _index = i),
-              itemBuilder: (context, i) {
-                return ClipRRect(
-                  borderRadius: BorderRadius.circular(14.r),
-                  child: Image.asset(
+            boxShadow: [
+              BoxShadow(
+                color: _C.accent.withOpacity(0.35),
+                blurRadius: 20,
+                spreadRadius: 1,
+              ),
+            ],
+          ),
+          child: Padding(
+            padding: EdgeInsets.all(6.r),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(18.r),
+              child: PageView.builder(
+                controller: _pageController,
+                scrollDirection: Axis.vertical,
+                itemCount: widget.images.length,
+                onPageChanged: (i) => setState(() => _index = i),
+                itemBuilder: (_, i) {
+                  return Image.asset(
                     widget.images[i],
-                    width: double.infinity,
-                    height: double.infinity,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-                  ),
-                );
-              },
+                    fit: BoxFit.fill,
+                  );
+                },
+              ),
             ),
           ),
         ),

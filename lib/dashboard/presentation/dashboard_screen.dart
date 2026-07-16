@@ -4,6 +4,7 @@ import 'package:flutter/physics.dart';
 import 'package:flutter/services.dart';
 
 import '../../services/background_music_service.dart';
+import '../../settings/presentation/settings_screen.dart';
 import 'widgets/ad_banner_widget.dart';
 import 'dart:ui';
 import 'package:flutter/material.dart';
@@ -14,7 +15,7 @@ import '../../login/presentation/login_screen.dart';
 import '../../tournament_detail/presentation/tournament_detail_screen.dart';
 import 'widgets/tournament_card_widget.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../../settings/presentation/settings_screen.dart';
+
 
 // ─── TV Focus Navigation Primitives ───────────────────────────────────────────
 // Reusable widgets that add Android TV remote (D-pad) support to any
@@ -593,7 +594,7 @@ class _DashboardScreenState extends State<DashboardScreen>
             child: _SideNavRail(
               selectedIndex: _selectedNavIndex,
               onIndexChanged: (i) {
-                if (i == 3) {
+                if (i == 2) {
                   Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -1476,6 +1477,10 @@ class _NavItem extends StatelessWidget {
 
 // ─── Hover Preview Card ───────────────────────────────────────────────────────
 // ─── Hover Preview Card ───────────────────────────────────────────────────────
+// CHANGED: Hover/focus effect simplified to match the Ad Banner style —
+// clean blue border + soft glow only. No scaling, no overlays, no
+// accent bars, no card movement. Card position/size (set by the parent
+// SizedBox in _buildHorizontalRow) is unchanged.
 class _HoverPreviewCard extends StatefulWidget {
   final TournamentModel tournament;
   final VoidCallback onTap;
@@ -1493,59 +1498,31 @@ class _HoverPreviewCard extends StatefulWidget {
   State<_HoverPreviewCard> createState() => _HoverPreviewCardState();
 }
 
-class _HoverPreviewCardState extends State<_HoverPreviewCard>
-    with SingleTickerProviderStateMixin {
-  // Combined "highlighted" state — true when hovered by mouse OR focused by
-  // TV remote — drives the exact same animation that used to be hover-only.
+// CHANGED: No longer needs SingleTickerProviderStateMixin — the old
+// AnimationController (_ctrl) that drove the scale/fade animation has been
+// removed. AnimatedContainer now handles the transition implicitly.
+class _HoverPreviewCardState extends State<_HoverPreviewCard> {
+  // Focus/hover state tracking — UNCHANGED in purpose, still driven by
+  // TvFocusableCard's onFocusChange/onHoverChange callbacks.
   bool _isFocused = false;
   bool _isHovered = false;
-  late AnimationController _ctrl;
-  late Animation<double> _scaleAnim;
-  late Animation<double> _fadeAnim;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 200),
-    );
-    _scaleAnim = Tween<double>(
-      begin: 1.0,
-      end: 1.06,
-    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic));
-    _fadeAnim = CurvedAnimation(parent: _ctrl, curve: Curves.easeOut);
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  void _syncAnimation() {
-    if (_isFocused || _isHovered) {
-      _ctrl.forward();
-    } else {
-      _ctrl.reverse();
-    }
-  }
 
   void _onFocusChange(bool focused) {
-    _isFocused = focused;
-    _syncAnimation();
+    if (!mounted) return;
+    setState(() => _isFocused = focused);
   }
 
   void _onHoverChange(bool hovered) {
-    _isHovered = hovered;
-    _syncAnimation();
+    if (!mounted) return;
+    setState(() => _isHovered = hovered);
   }
 
   @override
   Widget build(BuildContext context) {
     final t = widget.tournament;
-    final teamColor = _DS.teamColor(t.name);
 
+    // UNCHANGED: TvFocusableCard wiring — Focus, D-pad navigation,
+    // autofocus, focusNode, onTap — all exactly as before.
     return TvFocusableCard(
       focusNode: widget.focusNode,
       autofocus: widget.autofocus,
@@ -1554,131 +1531,44 @@ class _HoverPreviewCardState extends State<_HoverPreviewCard>
       onHoverChange: _onHoverChange,
       builder: (context, focused, hovered) {
         final highlighted = focused || hovered;
-        return AnimatedBuilder(
-          animation: _ctrl,
-          builder: (_, __) {
-            return Transform.scale(
-              scale: _scaleAnim.value,
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  // ── Base card with animated border + shadow ──
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    curve: Curves.easeOut,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: highlighted
-                            ? (focused
-                            ? _DS.accent.withOpacity(0.9)
-                            : teamColor.withOpacity(0.7))
-                            : Colors.white.withOpacity(0.06),
-                        width: highlighted ? 2 : 1,
-                      ),
-                      boxShadow: highlighted
-                          ? [
-                        BoxShadow(
-                          color: teamColor.withOpacity(0.25),
-                          blurRadius: 28,
-                          spreadRadius: 2,
-                          offset: const Offset(0, 6),
-                        ),
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.5),
-                          blurRadius: 20,
-                          offset: const Offset(0, 8),
-                        ),
-                        if (focused)
-                          BoxShadow(
-                            color: _DS.accent.withOpacity(0.4),
-                            blurRadius: 24,
-                            spreadRadius: 1,
-                          ),
-                      ]
-                          : [],
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(16),
-                      child: Stack(
-                        children: [
-                          // The actual card widget
-                          TournamentCardWidget(
-                            tournament: t,
-                            onTap: widget.onTap,
-                          ),
-                          // Overlay that fades in on hover/focus — darkens
-                          // card so the action button stands out
-                          if (highlighted)
-                            Positioned.fill(
-                              child: FadeTransition(
-                                opacity: _fadeAnim,
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    gradient: LinearGradient(
-                                      begin: Alignment.topCenter,
-                                      end: Alignment.bottomCenter,
-                                      colors: [
-                                        Colors.black.withOpacity(0.15),
-                                        Colors.black.withOpacity(0.55),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          // Top accent bar that slides in
-                          if (highlighted)
-                            Positioned(
-                              top: 0,
-                              left: 0,
-                              right: 0,
-                              child: FadeTransition(
-                                opacity: _fadeAnim,
-                                child: Container(
-                                  height: 3,
-                                  decoration: BoxDecoration(
-                                    gradient: LinearGradient(
-                                      colors: [teamColor, _DS.accent],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          // Bottom action strip
-                          if (highlighted)
-                            Positioned(
-                              bottom: 0,
-                              left: 0,
-                              right: 0,
-                              child: FadeTransition(
-                                opacity: _fadeAnim,
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 14,
-                                    vertical: 10,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    gradient: LinearGradient(
-                                      begin: Alignment.topCenter,
-                                      end: Alignment.bottomCenter,
-                                      colors: [
-                                        Colors.transparent,
-                                        Colors.black.withOpacity(0.8),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
+
+        // CHANGED: Replaced Transform.scale + multi-layer Stack (dark
+        // overlay, top accent bar, bottom action strip, multiple shadows)
+        // with a single AnimatedContainer that only animates border color/
+        // width and a soft glow — matching the Ad Banner's hover style.
+        // No scaling, no movement, no overlays.
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 200), // smooth ~200ms transition
+          curve: Curves.easeOut,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16), // unchanged radius
+            border: Border.all(
+              // CHANGED: clean blue border on focus/hover, normal border otherwise
+              color: highlighted
+                  ? _DS.accent.withOpacity(0.9)
+                  : Colors.white.withOpacity(0.06),
+              width: highlighted ? 2 : 1,
+            ),
+            boxShadow: highlighted
+                ? [
+              // CHANGED: single soft blue glow (replaces the previous
+              // team-color glow + black shadow + extra accent shadow)
+              BoxShadow(
+                color: _DS.accent.withOpacity(0.35),
+                blurRadius: 20,
+                spreadRadius: 1,
               ),
-            );
-          },
+            ]
+                : [], // no glow when not focused/hovered
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            // UNCHANGED: TournamentCardWidget itself, its data, and onTap.
+            child: TournamentCardWidget(
+              tournament: t,
+              onTap: widget.onTap,
+            ),
+          ),
         );
       },
     );
