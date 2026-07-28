@@ -35,16 +35,7 @@ class FeaturedLiveMatch extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(children: [
-            Text('FEATURED LIVE MATCH',
-                style: TextStyle(
-                  color: _C.live,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0.8,
-                )),
-          ]),
-          const SizedBox(height: 14),
+
           _LiveMatchCard(match: m, onWatchLive: () => onWatchLive(m)),
         ],
       ),
@@ -105,34 +96,38 @@ class _LiveMatchCardState extends State<_LiveMatchCard> {
       ),
       child: Row(
         children: [
-          // LIVE badge
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-            decoration: BoxDecoration(
-              color: _C.live.withOpacity(0.18),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: _C.live.withOpacity(0.5)),
-            ),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              Container(width: 7, height: 7, decoration: const BoxDecoration(shape: BoxShape.circle, color: _C.live)),
-              const SizedBox(width: 7),
-              const Text('LIVE',
-                  style: TextStyle(color: _C.live, fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: 0.8)),
-            ]),
-          ),
-          const SizedBox(width: 28),
 
-          // Teams
           Expanded(
+            flex: 4,
             child: Row(
               children: [
-                Expanded(child: _TeamLabel(name: m.teamId1Name, alignEnd: true)),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 18),
-                  child: Text('VS',
-                      style: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 13, fontWeight: FontWeight.w800)),
+                Expanded(
+                  flex: 2,
+                  child: _TeamLabel(
+                    name: m.teamId1Name,
+                    alignEnd: true,
+                  ),
                 ),
-                Expanded(child: _TeamLabel(name: m.teamId2Name, alignEnd: false)),
+
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  child: Text(
+                    'VS',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.3),
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+
+                Expanded(
+                  flex: 2,
+                  child: _TeamLabel(
+                    name: m.teamId2Name,
+                    alignEnd: false,
+                  ),
+                ),
               ],
             ),
           ),
@@ -165,16 +160,38 @@ class _LiveMatchCardState extends State<_LiveMatchCard> {
             child: GestureDetector(
               onTap: widget.onWatchLive,
               child: AnimatedScale(
-                scale: _buttonFocused ? 1.06 : 1.0,
-                duration: const Duration(milliseconds: 160),
+                scale: _buttonFocused ? 1.08 : 1.0,
+                duration: const Duration(milliseconds: 220),
                 child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 160),
+                  duration: const Duration(milliseconds: 220),
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
                   decoration: BoxDecoration(
-                    color: _buttonFocused ? _C.live : _C.live.withOpacity(0.85),
-                    borderRadius: BorderRadius.circular(12),
+                    color: _buttonFocused
+                        ? const Color(0xFFFF3D3D)
+                        : const Color(0xFFB71C1C),
+
+                    borderRadius: BorderRadius.circular(14),
+
+                    border: Border.all(
+                      color: _buttonFocused
+                          ? Colors.white
+                          : Colors.transparent,
+                      width: _buttonFocused ? 3 : 0,
+                    ),
+
                     boxShadow: _buttonFocused
-                        ? [BoxShadow(color: _C.live.withOpacity(0.5), blurRadius: 18)]
+                        ? [
+                      BoxShadow(
+                        color: Colors.white.withOpacity(0.35),
+                        blurRadius: 10,
+                        spreadRadius: 1,
+                      ),
+                      BoxShadow(
+                        color: _C.live.withOpacity(0.8),
+                        blurRadius: 24,
+                        spreadRadius: 4,
+                      ),
+                    ]
                         : [],
                   ),
                   child: Row(mainAxisSize: MainAxisSize.min, children: [

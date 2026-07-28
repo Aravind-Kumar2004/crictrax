@@ -156,6 +156,17 @@ class MatchDetailScreen extends StatelessWidget {
           // (ReadingOrderTraversalPolicy), so arrow-key movement still
           // "feels" natural, while Tab/Next-focus strictly follows the
           // explicit order below.
+          //
+          // NOTE: The innings card itself no longer holds a FocusNode —
+          // only the individual batsman/bowler rows inside each card are
+          // focusable now (see innings_card_widget.dart). Because those
+          // rows have no explicit FocusTraversalOrder of their own, they
+          // inherit the order assigned to their enclosing card below (10,
+          // 11, ...) and are tie-broken by the secondary
+          // ReadingOrderTraversalPolicy, which walks them top-to-bottom —
+          // i.e. Batsman 1, Batsman 2, ..., Bowler 1, Bowler 2, ... — per
+          // card, exactly matching the required focus order:
+          //   Back -> Watch Live -> Batsman 1..N -> Bowler 1..N (per card)
           FocusTraversalGroup(
             policy: OrderedTraversalPolicy(),
             child: Row(
@@ -166,7 +177,7 @@ class MatchDetailScreen extends StatelessWidget {
                 // ── Main content ───────────────────────────────────────────
                 Expanded(
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(28, 32, 36, 28),
+                    padding: const EdgeInsets.fromLTRB(20, 24, 24, 20),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -183,12 +194,12 @@ class MatchDetailScreen extends StatelessWidget {
                           tournamentId: tournamentId,
                         ),
 
-                        const SizedBox(height: 28),
+                        const SizedBox(height: 36),
 
                         // ── Innings section label ──────────────────────────
                         _InningsSectionLabel(isLive: isLive),
 
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 20),
 
                         // ── Innings stream ─────────────────────────────────
                         Expanded(
@@ -216,10 +227,13 @@ class MatchDetailScreen extends StatelessWidget {
                                   return Expanded(
                                     child: Padding(
                                       padding:
-                                      const EdgeInsets.only(right: 16),
+                                      const EdgeInsets.only(right: 20),
                                       // Explicit traversal order: cards come
                                       // after Back (1) and Watch Live (2),
-                                      // in left-to-right innings order.
+                                      // in left-to-right innings order. Rows
+                                      // inside each card inherit this order
+                                      // and are sorted top-to-bottom by the
+                                      // secondary reading-order policy.
                                       child: FocusTraversalOrder(
                                         order: NumericFocusOrder(
                                             (10 + index).toDouble()),
@@ -265,7 +279,7 @@ class _BackRail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 80,
+      width: 72,
       decoration: BoxDecoration(
         color: _C.surface.withOpacity(0.5),
         border: Border(
@@ -456,7 +470,7 @@ class _MatchHeaderCard extends StatelessWidget {
               ),
 
               Padding(
-                padding: const EdgeInsets.fromLTRB(28, 24, 28, 24),
+                padding: const EdgeInsets.fromLTRB(28, 22, 28, 22),
                 child: Column(
                   children: [
                     // ── Teams row ──────────────────────────────────────────

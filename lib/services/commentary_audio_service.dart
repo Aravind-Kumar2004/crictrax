@@ -20,12 +20,18 @@ class CommentaryAudioService {
 
   Future<void> playFour() async {
     await _player.stop();
-    await _player.play(AssetSource('audio/commentary/four.mp4'));
+    await _player.play(AssetSource('audio/commentary/boundry1.mpeg'));
   }
 
   Future<void> playSix() async {
     await _player.stop();
-    await _player.play(AssetSource('audio/commentary/six.mp4'));
+    await _player.play(AssetSource('audio/commentary/six3.mpeg'));
+  }
+  Future<void> playWicket() async {
+    await _player.stop();
+    await _player.play(
+      AssetSource('audio/commentary/wicket1.mpeg'),
+    );
   }
 
   Future<void> dispose() async {

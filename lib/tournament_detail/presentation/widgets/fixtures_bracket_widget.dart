@@ -270,7 +270,7 @@ class _ColumnHeader extends StatelessWidget {
           Expanded(flex: 8, child: Text('MATCH', style: _headerStyle, textAlign: TextAlign.center)),
           SizedBox(width: 160.w, child: Text('VENUE', style: _headerStyle)),
           SizedBox(width: 90.w, child: Text('OVERS', style: _headerStyle, textAlign: TextAlign.center)),
-          SizedBox(width: 130.w, child: Text('STATUS', style: _headerStyle, textAlign: TextAlign.center)),
+          SizedBox(width: 180.w, child: Text('STATUS', style: _headerStyle, textAlign: TextAlign.center)),
         ],
       ),
     );
@@ -452,7 +452,7 @@ class _FixtureRowState extends State<_FixtureRow> {
 
                     // Status
                     SizedBox(
-                      width: 130.w,
+                      width: 180.w,
                       child: Center(
                         child: _StatusBadge(label: _statusLabel, color: sc, isLive: isLv),
                       ),

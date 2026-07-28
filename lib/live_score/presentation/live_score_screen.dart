@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../../services/background_music_service.dart';
+import '../../services/celebration_video_service.dart';
 import '../../services/commentary_audio_service.dart';
 import '../data/models/repositories/live_score_repository.dart';
 
@@ -165,6 +166,7 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
   @override
   void initState() {
     super.initState();
+    debugPrint("🔥 LiveScoreScreen initState called");
 
     BackgroundMusicService.instance.pauseMusic();
 
@@ -180,6 +182,10 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
 
     _initMatchSubscription();
     _inningsStream = _repo.watchInnings(widget.tournamentId, widget.matchId);
+    debugPrint("=================================");
+    debugPrint("Tournament ID : ${widget.tournamentId}");
+    debugPrint("Match ID      : ${widget.matchId}");
+    debugPrint("=================================");
     _listenForLogout();
     _startHeartbeat();
   }
@@ -487,8 +493,8 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
             // they don't crowd a phone-sized layout. ─────────────────────
 
               Positioned(
-                left:50,
-                top: 0,
+                left:20,
+                top:100,
                 bottom: 0,
                 child: Center(
                   child: _SideAdBanner(
@@ -501,8 +507,8 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
               ),
 
               Positioned(
-                right: 50,
-                top: 0,
+                right: 20,
+                top: 100,
                 bottom: 0,
                 child: Center(
                   child: _SideAdBanner(
@@ -633,6 +639,10 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
                     child: StreamBuilder<QuerySnapshot>(
                       stream: _inningsStream,
                       builder: (context, inningsSnap) {
+                        debugPrint("===== INNINGS STREAM =====");
+                        debugPrint("Connection : ${inningsSnap.connectionState}");
+                        debugPrint("Has Data   : ${inningsSnap.hasData}");
+                        debugPrint("Docs Count : ${inningsSnap.data?.docs.length}");
                         if (inningsSnap.hasError) {
                           WidgetsBinding.instance.addPostFrameCallback((_) {
                             if (mounted) _scheduleReconnect();
@@ -664,6 +674,11 @@ class _LiveScoreScreenState extends State<LiveScoreScreen>
                         _reconnectTimer?.cancel();
 
                         final docs = inningsSnap.data!.docs;
+                        debugPrint("Current Match = ${widget.matchId}");
+                        debugPrint("Docs = ${docs.length}");
+                        for (final doc in docs) {
+                          debugPrint("Innings Document ID : ${doc.id}");
+                        }
 
                         WidgetsBinding.instance.addPostFrameCallback((_) {
                           if (mounted) _checkInningsCompletion(docs);
@@ -1335,7 +1350,7 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
                                   '6s',
                                   'SR',
                                 ]),
-                                Divider(color: Colors.white12, height: 12.h),
+                                Divider(color: Colors.white12, height: 3.h),
                                 ...(batsmen..sort(
                                       (a, b) => ((b['runs'] ?? 0) as num)
                                       .compareTo((a['runs'] ?? 0) as num),
@@ -1423,7 +1438,7 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
             .skip(1)
             .map(
               (c) => SizedBox(
-            width: 54.w,
+            width: 75.w,
             child: Text(
               c,
               textAlign: TextAlign.center,
@@ -1439,7 +1454,7 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
     ),
   );
 
-  // REDUCED: row vertical padding 16.h → 12.h, text 23.sp → 20.sp
+
   Widget _batsmanRow(Map<String, dynamic> b) {
     final name = (b['playerName'] ?? b['name'] ?? '').toString();
     final runs = (b['runs'] ?? 0) as num;
@@ -1460,8 +1475,8 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
               name.length > 16 ? '${name.substring(0, 16)}…' : name,
               style: TextStyle(
                 color: isOut ? Colors.white54 : Colors.white70,
-                fontSize: 20.sp,
-                fontWeight: FontWeight.w600,
+                fontSize: 26.sp,
+                fontWeight: FontWeight.w800,
               ),
             ),
           ),
@@ -1494,8 +1509,8 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
               name.length > 16 ? '${name.substring(0, 16)}…' : name,
               style: TextStyle(
                 color: Colors.white70,
-                fontSize: 20.sp,
-                fontWeight: FontWeight.w600,
+                fontSize: 26.sp,
+                fontWeight: FontWeight.w800,
               ),
             ),
           ),
@@ -1510,7 +1525,7 @@ class _MatchSummaryScreenState extends State<_MatchSummaryScreen> {
 
   // REDUCED: stat cell width 62.w → 54.w, text 23.sp → 20.sp
   Widget _sc(String t, {bool bold = false, Color? color}) => SizedBox(
-    width: 54.w,
+    width: 75.w,
     child: Text(
       t,
       textAlign: TextAlign.center,
@@ -2280,11 +2295,12 @@ class _BroadcastBottomPanel extends StatefulWidget {
   @override
   State<_BroadcastBottomPanel> createState() => _BroadcastBottomPanelState();
 }
-
 class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
   // ── Business Logic (UNCHANGED) ────────────────────────────────────────────
   List<Map<String, dynamic>> _cachedBatsmen = [];
   Map<String, dynamic>? _cachedBowler;
+  bool _isFirstLoad = true;
+  int _previousWickets = 0;
 
   late String _trackedInningsId = widget.inningsId;
   late Stream<QuerySnapshot> _batsmenStream = widget.repo.watchBatsmen(
@@ -2297,6 +2313,13 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
     widget.matchId,
     widget.inningsId,
   );
+
+  late Stream<QuerySnapshot> _scoresStream = widget.repo.watchScores(
+    widget.tournamentId,
+    widget.matchId,
+    widget.inningsId,
+  );
+  String? _cachedStrikeBatsmanId;
 
   @override
   void didUpdateWidget(covariant _BroadcastBottomPanel oldWidget) {
@@ -2311,7 +2334,15 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
           widget.matchId,
           widget.inningsId,
         );
+
         _bowlersStream = widget.repo.watchBowlers(
+          widget.tournamentId,
+          widget.matchId,
+          widget.inningsId,
+        );
+
+        _cachedStrikeBatsmanId = null;
+        _scoresStream = widget.repo.watchScores(
           widget.tournamentId,
           widget.matchId,
           widget.inningsId,
@@ -2384,6 +2415,14 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
         final totalWickets =
             (widget.innData['totalWickets'] as num?)?.toInt() ??
                 calculatedWickets;
+        if (_isFirstLoad) {
+          _previousWickets = totalWickets;
+          _isFirstLoad = false;
+        } else if (totalWickets > _previousWickets) {
+          CommentaryAudioService.instance.playWicket();
+          CelebrationVideoService.instance.showWicket(context);
+          _previousWickets = totalWickets;
+        }
 
         final totalBalls =
             (widget.innData['balls'] as num?)?.toInt() ??
@@ -2425,6 +2464,7 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
 
         final activeBatsmenForPanel = activeBatsmen;
 
+
         return StreamBuilder<QuerySnapshot>(
           stream: _bowlersStream,
           builder: (context, bowlSnap) {
@@ -2451,7 +2491,9 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
                 midOverBowlers.sort((a, b) {
                   final aActive = a['isBowling'] == true ? 0 : 1;
                   final bActive = b['isBowling'] == true ? 0 : 1;
-                  if (aActive != bActive) return aActive.compareTo(bActive);
+                  if (aActive != bActive) {
+                    return aActive.compareTo(bActive);
+                  }
                   final aTs = a['lastUpdated'];
                   final bTs = b['lastUpdated'];
                   if (aTs is Timestamp && bTs is Timestamp) {
@@ -2481,9 +2523,8 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
                       .toList();
                   if (withTimestamp.isNotEmpty) {
                     withTimestamp.sort(
-                          (a, b) => (b['lastUpdated'] as Timestamp).compareTo(
-                        a['lastUpdated'] as Timestamp,
-                      ),
+                          (a, b) => (b['lastUpdated'] as Timestamp)
+                          .compareTo(a['lastUpdated'] as Timestamp),
                     );
                     _cachedBowler = withTimestamp.first;
                   } else {
@@ -2509,32 +2550,47 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
               rrr = (runsNeeded / ballsRemaining) * 6;
             }
 
-            return _buildBroadcastPanel(
-              context: context,
-              battingTeamName: battingTeamName,
-              opponentName: opponentName,
-              totalRuns: totalRuns,
-              totalWickets: totalWickets,
-              totalBalls: totalBalls,
-              oversDisplay: oversDisplay,
-              activeBatsmen: activeBatsmenForPanel,
-              bowler: bowler,
-              crr: crr,
-              rrr: rrr,
-              target: target,
-              runsNeeded: runsNeeded,
-              ballsRemaining: ballsRemaining,
-              oversRemaining: oversRemaining,
-              currentOverNumber: currentOverNumber,
-              batsmenConnecting: batsmenStillConnecting,
-              bowlerConnecting: bowlerStillConnecting,
+            return StreamBuilder<QuerySnapshot>(
+              stream: _scoresStream,
+              builder: (context, scoreSnap) {
+                final scoreDocs = scoreSnap.data?.docs ?? [];
+                if (scoreDocs.isNotEmpty) {
+                  final scoreData = scoreDocs.first.data() as Map<String, dynamic>;
+                  final candidate = scoreData['strikeBatsmanId'] as String?;
+                  if (candidate != null && candidate.isNotEmpty) {
+                    _cachedStrikeBatsmanId = candidate;
+                  }
+                  debugPrint('🎯 resolved strike id (from scores doc): $_cachedStrikeBatsmanId');
+                }
+
+                return _buildBroadcastPanel(
+                  context: context,
+                  battingTeamName: battingTeamName,
+                  opponentName: opponentName,
+                  totalRuns: totalRuns,
+                  totalWickets: totalWickets,
+                  totalBalls: totalBalls,
+                  oversDisplay: oversDisplay,
+                  activeBatsmen: activeBatsmenForPanel,
+                  bowler: bowler,
+                  crr: crr,
+                  rrr: rrr,
+                  target: target,
+                  runsNeeded: runsNeeded,
+                  ballsRemaining: ballsRemaining,
+                  oversRemaining: oversRemaining,
+                  currentOverNumber: currentOverNumber,
+                  batsmenConnecting: batsmenStillConnecting,
+                  bowlerConnecting: bowlerStillConnecting,
+                  currentStrikeBatsmanId: _cachedStrikeBatsmanId,
+                );
+              },
             );
           },
         );
       },
     );
   }
-
 
   // ═══════════════════════════════════════════════════════════════════
   Widget _buildBroadcastPanel({
@@ -2556,7 +2612,8 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
     required int currentOverNumber,
     required bool batsmenConnecting, // NEW (Bug 1 fix)
     required bool bowlerConnecting,
-  }) {
+    required String? currentStrikeBatsmanId,
+    }) {
     final crrStr = crr is double
         ? crr.toStringAsFixed(2)
         : double.tryParse(crr.toString())?.toStringAsFixed(2) ?? '0.00';
@@ -2595,8 +2652,8 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
                   // Team 1 Logo
                   Image.asset(
                     'assets/images/logo2.png',
-                    width: 200.w,
-                    height: 200.w,
+                    width: 250.w,
+                    height: 250.w,
                     fit: BoxFit.contain,
                   ),
 
@@ -2609,7 +2666,7 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
                           text: '$totalRuns',
                           style: TextStyle(
                             color: Colors.white,
-                            fontSize: 132.sp,
+                            fontSize: 175.sp,
                             fontWeight: FontWeight.w900,
                           ),
                         ),
@@ -2617,7 +2674,7 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
                           text: '/$totalWickets',
                           style: TextStyle(
                             color: _C.accent,
-                            fontSize: 95.sp,
+                            fontSize: 130.sp,
                             fontWeight: FontWeight.w900,
                           ),
                         ),
@@ -2630,8 +2687,8 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
                   // Team 2 Logo
                   Image.asset(
                     'assets/images/logo1.png',
-                    width: 200.w,
-                    height: 200.w,
+                    width: 250.w,
+                    height: 250.w,
                     fit: BoxFit.contain,
                   ),
                 ],
@@ -2706,7 +2763,7 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
                         builder: (context, focused) => AnimatedContainer(
                           duration: const Duration(milliseconds: 150),
                           padding: EdgeInsets.symmetric(
-                            horizontal: 28.w,
+                            horizontal: 16.w,
                             vertical: 16.h,
                           ),
                           decoration: BoxDecoration(
@@ -2719,24 +2776,10 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
                               width: focused ? 2.5 : 1.5,
                             ),
                           ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.assignment_outlined,
-                                color: _C.accent,
-                                size: 18.sp,
-                              ),
-                              SizedBox(width: 10.w),
-                              Text(
-                                'FULL SCORECARD',
-                                style: TextStyle(
-                                  color: _C.accent,
-                                  fontSize: 18.sp,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                            ],
+                          child: Icon(
+                            Icons.assignment_outlined,
+                            color: _C.accent,
+                            size: 28.sp,
                           ),
                         ),
                       ),
@@ -2760,6 +2803,7 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
                 batters: activeBatsmen,
                 isConnecting: batsmenConnecting,
                 pulseAnim: widget.pulseAnim,
+                currentStrikeBatsmanId: currentStrikeBatsmanId,
               ),
             ),
             SizedBox(width: 24.w),
@@ -2918,35 +2962,40 @@ class _TargetStat extends StatelessWidget {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// BATSMAN CARD
-// ═══════════════════════════════════════════════════════════════════════════════
-// UI UPDATE: added a clear on-strike (current striker) indicator — a
-// highlighted, bordered row with a glowing accent bar and a "STRIKE" chip,
-// plus a subtle pulse using the same pulseAnim already driving the LIVE
-// badge elsewhere on this screen. Sorting/data logic is unchanged.
-// ═══════════════════════════════════════════════════════════════════════════════
-class _BatsmenCard extends StatelessWidget {
+  class _BatsmenCard extends StatelessWidget {
   final String battingTeamName;
   final List<Map<String, dynamic>> batters;
   final bool isConnecting;
   final Animation<double>? pulseAnim;
+  final String? currentStrikeBatsmanId;
   const _BatsmenCard({
-    required this.battingTeamName,
-    required this.batters,
-    this.isConnecting = false,
-    this.pulseAnim,
+  required this.battingTeamName,
+  required this.batters,
+  this.isConnecting = false,
+  this.pulseAnim,
+  this.currentStrikeBatsmanId,
   });
 
   @override
+  @override
   Widget build(BuildContext context) {
-    final sorted = [...batters]
-      ..sort((a, b) {
-        final aS = (a['isOnStrike'] == true || a['onStrike'] == true) ? 0 : 1;
-        final bS = (b['isOnStrike'] == true || b['onStrike'] == true) ? 0 : 1;
-        return aS.compareTo(bS);
-      });
-    final display = sorted.take(2).toList();
+    bool isStriker(Map<String, dynamic> b) {
+      final id = currentStrikeBatsmanId;
+      if (id == null || id.isEmpty) return false;
+      return b['batId'] == id;
+    }
+
+  final sorted = [...batters]
+    ..sort((a, b) {
+      final aS = isStriker(a) ? 0 : 1;
+      final bS = isStriker(b) ? 0 : 1;
+      return aS.compareTo(bS);
+    });
+  final display = sorted.take(2).toList();
+  debugPrint(
+    '🏏 BatsmenCard — currentStrikeBatsmanId=$currentStrikeBatsmanId | '
+        '${batters.map((b) => "name=${b['playerName']} playerId=${b['playerId']} batId=${b['batId']}").join(' , ')}',
+  );
 
     return _CardShell(
       padding: EdgeInsets.symmetric(horizontal: 28.w, vertical: 26.h),
@@ -2959,33 +3008,33 @@ class _BatsmenCard extends StatelessWidget {
                 'BATSMAN',
                 style: TextStyle(
                   color: _C.textDim,
-                  fontSize: 19.sp,
+                  fontSize: 35.sp,
                   fontWeight: FontWeight.w800,
                   letterSpacing: 2.sp,
                 ),
               ),
               const Spacer(),
               SizedBox(
-                width: 52.w,
+                width: 100.w,
                 child: Text(
-                  'R',
+                  'RUNS',
                   textAlign: TextAlign.right,
                   style: TextStyle(
                     color: _C.textDim,
-                    fontSize: 19.sp,
+                    fontSize: 35.sp,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
               ),
-              SizedBox(width: 16.w),
+              SizedBox(width: 50.w),
               SizedBox(
-                width: 40.w,
+                width: 120.w,
                 child: Text(
-                  'B',
+                  'BALLS',
                   textAlign: TextAlign.right,
                   style: TextStyle(
                     color: _C.textDim,
-                    fontSize: 19.sp,
+                    fontSize: 35.sp,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
@@ -3012,7 +3061,9 @@ class _BatsmenCard extends StatelessWidget {
               final runs = b['runs'] ?? 0;
               final balls = b['ballsFaced'] ?? 0;
               final onStrike =
-                  b['isOnStrike'] == true || b['onStrike'] == true;
+                  b['isStriker'] == true ||
+                      b['isOnStrike'] == true ||
+                      b['onStrike'] == true;
               final displayName = name.isEmpty
                   ? 'Unknown'
                   : (name.length > 18 ? '${name.substring(0, 18)}…' : name);
@@ -3059,10 +3110,8 @@ class _BatsmenCard extends StatelessWidget {
                               displayName,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                color: Colors.white.withOpacity(
-                                  onStrike ? 1 : 0.55,
-                                ),
-                                fontSize: 25.sp,
+                                color: Colors.white,
+                                fontSize: 35.sp,
                                 fontWeight: onStrike
                                     ? FontWeight.w800
                                     : FontWeight.w600,
@@ -3107,29 +3156,47 @@ class _BatsmenCard extends StatelessWidget {
                     ),
                     SizedBox(
                       width: 52.w,
-                      child: Text(
-                        '$runs${onStrike ? '*' : ''}',
-                        textAlign: TextAlign.right,
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 25.sp,
-                          fontWeight: FontWeight.w800,
+                      child:SizedBox(
+                        width: 75.w,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              '$runs',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 35.sp,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            if (onStrike)
+                              Text(
+                                '*',
+                                style: TextStyle(
+                                  color: Colors.amber,
+                                  fontSize: 35.sp,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                          ],
                         ),
                       ),
                     ),
-                    SizedBox(width: 16.w),
+                    SizedBox(width: 70.w),
                     SizedBox(
-                      width: 40.w,
+                      width: 60.w,
                       child: Text(
                         '$balls',
                         textAlign: TextAlign.right,
                         style: TextStyle(
                           color: Colors.white.withOpacity(0.5),
-                          fontSize: 23.sp,
+                          fontSize: 35.sp,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
                     ),
+                    SizedBox(width: 50.w),
                   ],
                 ),
               );
@@ -3190,18 +3257,18 @@ class _BowlerCard extends StatelessWidget {
                 'BOWLER',
                 style: TextStyle(
                   color: _C.textDim,
-                  fontSize: 19.sp,
+                  fontSize: 35.sp,
                   fontWeight: FontWeight.w800,
                   letterSpacing: 2.sp,
                 ),
               ),
               const Spacer(),
               _colHeader('O'),
-              SizedBox(width: 14.w),
+              SizedBox(width: 45.w),
               _colHeader('M'),
-              SizedBox(width: 14.w),
+              SizedBox(width: 45.w),
               _colHeader('R'),
-              SizedBox(width: 14.w),
+              SizedBox(width: 45.w),
               _colHeader('W'),
             ],
           ),
@@ -3216,25 +3283,25 @@ class _BowlerCard extends StatelessWidget {
                   maxLines: 2,
                   style: TextStyle(
                     color: Colors.white,
-                    fontSize: 25.sp,
+                    fontSize: 35.sp,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
               ),
               _colVal('$bowlerOvers'),
-              SizedBox(width: 14.w),
+              SizedBox(width: 40.w),
               _colVal('$maidens'),
-              SizedBox(width: 14.w),
+              SizedBox(width: 40.w),
               _colVal('$runsConceded'),
-              SizedBox(width: 14.w),
+              SizedBox(width: 40.w),
               SizedBox(
-                width: 36.w,
+                width: 40.w,
                 child: Text(
                   '$wkts',
                   textAlign: TextAlign.right,
                   style: TextStyle(
                     color: _C.accent,
-                    fontSize: 30.sp,
+                    fontSize: 35.sp,
                     fontWeight: FontWeight.w900,
                   ),
                 ),
@@ -3247,26 +3314,26 @@ class _BowlerCard extends StatelessWidget {
   }
 
   Widget _colHeader(String t) => SizedBox(
-    width: 36.w,
+    width: 50.w,
     child: Text(
       t,
       textAlign: TextAlign.right,
       style: TextStyle(
         color: _C.textDim,
-        fontSize: 19.sp,
+        fontSize: 35.sp,
         fontWeight: FontWeight.w800,
       ),
     ),
   );
 
   Widget _colVal(String t) => SizedBox(
-    width: 36.w,
+    width: 70.w,
     child: Text(
       t,
       textAlign: TextAlign.right,
       style: TextStyle(
         color: Colors.white.withOpacity(0.6),
-        fontSize: 23.sp,
+        fontSize: 35.sp,
         fontWeight: FontWeight.w600,
       ),
     ),
@@ -3319,7 +3386,7 @@ class _SideAdBannerState extends State<_SideAdBanner> {
   Widget build(BuildContext context) {
     if (widget.images.isEmpty) return const SizedBox.shrink();
     return SizedBox(
-      width: 200.w,
+      width: 225.w,
       height: 500.h,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(24.r),
@@ -4008,7 +4075,7 @@ class _BallByBallTrackerState extends State<_BallByBallTracker> {
       print("Changing Stream to Over ${widget.overNumber}");
 
       _trackedOver = widget.overNumber;
-      _lastPlayedBallId = null;
+      // _lastPlayedBallId = null;
 
       _ballsStream = widget.repo.watchCurrentOverBalls(
         widget.tournamentId,
@@ -4054,10 +4121,13 @@ class _BallByBallTrackerState extends State<_BallByBallTracker> {
 
       case 4:
         CommentaryAudioService.instance.playFour();
+        CelebrationVideoService.instance.showFour(context);
         break;
+
 
       case 6:
         CommentaryAudioService.instance.playSix();
+        CelebrationVideoService.instance.showSix(context);
         break;
     }
   }

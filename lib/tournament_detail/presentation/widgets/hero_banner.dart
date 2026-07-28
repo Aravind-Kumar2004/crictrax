@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../../../../dashboard/domain/entities/tournament_entity.dart';
+import '../../data/models/match_model.dart';
+import 'featured_live_match.dart';
 
 // ─── Design Tokens ────────────────────────────────────────────────────────────
 class _C {
@@ -23,13 +25,26 @@ class _StatusMeta {
 
 class HeroBanner extends StatefulWidget {
   final TournamentEntity tournament;
-  const HeroBanner({Key? key, required this.tournament}) : super(key: key);
+  final TournamentMatchModel? featuredMatch;
+  final ValueChanged<TournamentMatchModel>? onWatchLive;
+
+  const HeroBanner({
+    Key? key,
+    required this.tournament,
+    this.featuredMatch,
+    this.onWatchLive,
+  }) : super(key: key);
 
   @override
   State<HeroBanner> createState() => _HeroBannerState();
 }
 
 class _HeroBannerState extends State<HeroBanner> with SingleTickerProviderStateMixin {
+  // CHANGED: _focused is no longer driven by a FocusableActionDetector on
+  // the whole banner (the banner itself is no longer a focus target). The
+  // field is kept — untouched — only so the existing scale/border/glow
+  // styling code below still compiles and renders exactly as it did in its
+  // "unfocused" state. It is intentionally never set to true anymore.
   bool _focused = false;
   late final AnimationController _pulseCtrl;
   late final Animation<double> _pulseAnim;
@@ -109,8 +124,29 @@ class _HeroBannerState extends State<HeroBanner> with SingleTickerProviderStateM
         _InfoCardData(icon: Icons.format_list_bulleted_rounded, label: 'FORMAT', value: t.format),
     ];
 
-    return FocusableActionDetector(
-      onShowFocusHighlight: (f) => setState(() => _focused = f),
+    // CHANGED: the entire banner used to be wrapped in a single
+    // `FocusableActionDetector` (see old code below), which made the whole
+    // Hero Banner ONE focus node in the focus tree:
+    //
+    //   FocusableActionDetector(
+    //     onShowFocusHighlight: (f) => setState(() => _focused = f),
+    //     child: AnimatedScale(...),
+    //   )
+    //
+    // That swallowed D-pad focus at the banner level, so the remote could
+    // never drill down into the WATCH LIVE button (or any other control)
+    // rendered inside it.
+    //
+    // Fix: the outer FocusableActionDetector is removed so the banner is a
+    // plain, non-focusable container again. It's wrapped in a
+    // `FocusTraversalGroup` instead — this doesn't request focus itself,
+    // it just scopes/orders focus traversal for the focusable descendants
+    // inside it (e.g. the WATCH LIVE button in FeaturedLiveMatch), using
+    // reading order (top-to-bottom, left-to-right) so D-pad navigation
+    // flows naturally through the banner's content and out the other side
+    // to the rest of the Home page.
+    return FocusTraversalGroup(
+      policy: ReadingOrderTraversalPolicy(),
       child: AnimatedScale(
         scale: _focused ? 1.02 : 1.0,
         duration: const Duration(milliseconds: 200),
@@ -191,7 +227,7 @@ class _HeroBannerState extends State<HeroBanner> with SingleTickerProviderStateM
 
 
 
-                // ── Main content column: top row / middle row / footer ─────────
+                // ── Main content column: top row / featured match / middle row / footer ─────────
                 Padding(
                   padding: EdgeInsets.fromLTRB(40.w, 28.h, 40.w, 24.h),
                   child: Column(
@@ -247,6 +283,23 @@ class _HeroBannerState extends State<HeroBanner> with SingleTickerProviderStateM
                           _StatusBadge(meta: meta, pulseAnim: _pulseAnim),
                         ],
                       ),
+
+                      // ── FEATURED LIVE MATCH — embedded between Tournament
+                      // Header and Tournament Information Cards. Same widget,
+                      // same data source, same onWatchLive callback as before;
+                      // placement is unchanged from the prior step. Its
+                      // WATCH LIVE button (inside FeaturedLiveMatch /
+                      // _LiveMatchCard) already owns its own FocusNode via
+                      // FocusableActionDetector — now that the banner no
+                      // longer intercepts focus, that button is reachable
+                      // and independently focusable by the D-pad, with its
+                      // existing focus styling (scale, border, glow)
+                      // completely unchanged. ───────────────────────────────
+                      if (widget.featuredMatch != null)
+                        FeaturedLiveMatch(
+                          match: widget.featuredMatch,
+                          onWatchLive: widget.onWatchLive ?? (_) {},
+                        ),
 
                       // ── MIDDLE ROW: small poster (left) + info cards (center) ──
                       Row(

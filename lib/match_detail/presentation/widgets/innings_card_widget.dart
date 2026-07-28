@@ -21,6 +21,110 @@ class _C {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// TV ROW FOCUS WRAPPER (D-PAD NAVIGATION ONLY — no design/business logic here)
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// Gives an individual batsman/bowler row its own FocusNode so it can be
+// targeted directly by the D-pad, independent of the innings card itself
+// (the card no longer participates in focus at all — see InningsCardWidget
+// below). When a row receives focus it:
+//   • asks the nearest enclosing Scrollable (the card's internal
+//     SingleChildScrollView) to scroll itself into view, and
+//   • reports its focused state to `builder` so the call-site can draw a
+//     highlight without altering the row's existing design.
+//
+// Directional Up/Down movement between rows is resolved automatically by
+// Flutter's default directional-focus keyboard shortcuts + traversal
+// policy (the same mechanism already relied on for arrow-key movement
+// between cards) — no extra shortcut wiring is needed here.
+typedef _RowFocusBuilder = Widget Function(BuildContext context, bool focused);
+
+class _TvFocusableRow extends StatefulWidget {
+  final _RowFocusBuilder builder;
+  final String? debugLabel;
+
+  const _TvFocusableRow({
+    Key? key,
+    required this.builder,
+    this.debugLabel,
+  }) : super(key: key);
+
+  @override
+  State<_TvFocusableRow> createState() => _TvFocusableRowState();
+}
+
+class _TvFocusableRowState extends State<_TvFocusableRow> {
+  late final FocusNode _focusNode =
+  FocusNode(debugLabel: widget.debugLabel ?? 'TvFocusableRow');
+  bool _focused = false;
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  void _handleFocusChange(bool focused) {
+    if (!mounted) return;
+    setState(() => _focused = focused);
+
+    if (focused) {
+      // Auto-scroll the innings card's internal scroll view so the
+      // newly-focused row is kept visible. Runs after the frame in which
+      // focus changed so layout is up to date.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final ctx = _focusNode.context;
+        if (ctx == null || !ctx.mounted) return;
+        Scrollable.ensureVisible(
+          ctx,
+          alignment: 0.5,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        );
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Focus(
+      focusNode: _focusNode,
+      onFocusChange: _handleFocusChange,
+      child: widget.builder(context, _focused),
+    );
+  }
+}
+
+// Shared highlight wrapper so batsman/bowler rows get a consistent,
+// non-destructive focus treatment (adds a border/glow only — the row's
+// own content, colors, and layout are untouched).
+Widget _focusHighlightWrap({required Widget child, required bool focused}) {
+  return AnimatedContainer(
+    duration: const Duration(milliseconds: 150),
+    curve: Curves.easeOut,
+    margin: const EdgeInsets.symmetric(horizontal: 4),
+    decoration: BoxDecoration(
+      borderRadius: BorderRadius.circular(10),
+      border: Border.all(
+        color: focused ? _C.focusGlow : Colors.transparent,
+        width: 2,
+      ),
+      color: focused ? _C.focusGlow.withOpacity(0.06) : Colors.transparent,
+      boxShadow: focused
+          ? [
+        BoxShadow(
+          color: _C.focusGlow.withOpacity(0.35),
+          blurRadius: 12,
+          spreadRadius: 0.5,
+        ),
+      ]
+          : [],
+    ),
+    child: child,
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // INNINGS CARD WIDGET
 // ═══════════════════════════════════════════════════════════════════════════════
 class InningsCardWidget extends StatefulWidget {
@@ -54,14 +158,11 @@ class _InningsCardWidgetState extends State<InningsCardWidget> {
   List<Map<String, dynamic>> _bowlers = [];
   bool _loading = true;
 
-  // ── TV D-Pad Focus (navigation-only, no business logic) ─────────────────────
-  // Each card owns its own FocusNode so it can receive D-pad focus
-  // independently. Lifecycle is scoped to this State object and disposed
-  // in dispose() below. Only a local setState is triggered on focus
-  // change, so focusing a card never rebuilds the rest of the screen.
-  late final FocusNode _focusNode =
-  FocusNode(debugLabel: 'InningsCard-${widget.inningsId}');
-  bool _focused = false;
+  // NOTE: The innings card itself intentionally holds no FocusNode and is
+  // never part of the D-pad focus chain — only the individual batsman and
+  // bowler rows inside it are focusable (see _TvFocusableRow above). This
+  // matches the requirement that the card as a whole must never receive
+  // focus.
 
   // ── Business Logic (COMPLETELY UNCHANGED) ───────────────────────────────────
   @override
@@ -72,7 +173,6 @@ class _InningsCardWidgetState extends State<InningsCardWidget> {
 
   @override
   void dispose() {
-    _focusNode.dispose();
     super.dispose();
   }
 
@@ -118,11 +218,6 @@ class _InningsCardWidgetState extends State<InningsCardWidget> {
     return '$comp.$rem';
   }
 
-  void _onFocusChange(bool focused) {
-    // Local setState only — rebuilds just this card, not the screen.
-    if (mounted) setState(() => _focused = focused);
-  }
-
   // ── Build ───────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
@@ -157,7 +252,6 @@ class _InningsCardWidgetState extends State<InningsCardWidget> {
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
             children: [
               // ── Card header ──────────────────────────────────────────────
               _InningsHeader(
@@ -174,78 +268,39 @@ class _InningsCardWidgetState extends State<InningsCardWidget> {
                 _TargetBadge(targetRuns: targetRuns),
 
               // ── Body ─────────────────────────────────────────────────────
+              // Wrapped in Expanded + SingleChildScrollView so that only
+              // this card's batting/bowling content scrolls (via D-pad
+              // focus autoscroll) while the header stays put and the rest
+              // of the Match Detail page never moves.
               if (_loading)
                 _LoadingBody()
-              else ...[
-                _SectionDivider(label: 'Batting', color: _C.accent),
-                _BatsmenTable(batsmen: _batsmen),
-                const SizedBox(height: 4),
-                _SectionDivider(label: 'Bowling', color: _C.purple),
-                _BowlersTable(bowlers: _bowlers),
-                const SizedBox(height: 16),
-              ],
+              else
+                Expanded(
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _SectionDivider(label: 'Batting', color: _C.accent),
+                        _BatsmenTable(batsmen: _batsmen),
+                        const SizedBox(height: 2),
+                        _SectionDivider(label: 'Bowling', color: _C.purple),
+                        _BowlersTable(bowlers: _bowlers),
+                        const SizedBox(height: 8),
+                      ],
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
       ),
     );
 
-    // ── TV Focus wrapper ────────────────────────────────────────────────────
-    // FocusableActionDetector makes the whole card individually focusable
-    // and wires up the remote OK button (DPAD_CENTER / Enter / gamepad A)
-    // to ActivateIntent. The card has no existing onTap in the original
-    // design, so activating it simply confirms focus (no new navigation
-    // behavior is introduced) — the visual highlight below is the feedback.
-    //
-    // Border width stays constant (3px, transparent when unfocused) so the
-    // layout box never changes size on focus — only color/shadow/scale
-    // change, keeping the animation cheap and GPU-friendly with no reflow
-    // of sibling cards.
-    return FocusableActionDetector(
-      focusNode: _focusNode,
-      onFocusChange: _onFocusChange,
-      actions: <Type, Action<Intent>>{
-        ActivateIntent: CallbackAction<ActivateIntent>(
-          onInvoke: (intent) {
-            // No existing tap/navigation action exists for the innings
-            // card in the original design, so there is nothing to invoke
-            // here — focus highlight is the only feedback, per spec.
-            return null;
-          },
-        ),
-      },
-      shortcuts: const <ShortcutActivator, Intent>{
-        SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
-        SingleActivator(LogicalKeyboardKey.select): ActivateIntent(),
-        SingleActivator(LogicalKeyboardKey.gameButtonA): ActivateIntent(),
-      },
-      child: AnimatedScale(
-        scale: _focused ? 1.04 : 1.0,
-        duration: const Duration(milliseconds: 180),
-        curve: Curves.easeOut,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          curve: Curves.easeOut,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(
-              color: _focused ? _C.focusGlow : Colors.transparent,
-              width: 3,
-            ),
-            boxShadow: _focused
-                ? [
-              BoxShadow(
-                color: _C.focusGlow.withOpacity(0.45),
-                blurRadius: 24,
-                spreadRadius: 1,
-              ),
-            ]
-                : [],
-          ),
-          child: cardContent,
-        ),
-      ),
-    );
+    // The innings card is a plain, non-focusable subtree. Focus lives only
+    // on the individual batsman/bowler rows inside it (see _BatsmenTable /
+    // _BowlersTable below), so the card itself is never a stop in the
+    // D-pad traversal order.
+    return cardContent;
   }
 }
 
@@ -272,7 +327,7 @@ class _InningsHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
@@ -290,7 +345,7 @@ class _InningsHeader extends StatelessWidget {
         children: [
           // Top shimmer
           Positioned(
-            top: -18, left: 0, right: 0,
+            top: -12, left: 0, right: 0,
             child: Container(
               height: 1,
               decoration: BoxDecoration(
@@ -306,7 +361,7 @@ class _InningsHeader extends StatelessWidget {
           ),
 
           Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               // Left: innings label + team name
               Expanded(
@@ -316,7 +371,7 @@ class _InningsHeader extends StatelessWidget {
                     // Innings pill
                     Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 9, vertical: 3),
+                          horizontal: 8, vertical: 2),
                       decoration: BoxDecoration(
                         color: _C.accent.withOpacity(0.1),
                         borderRadius: BorderRadius.circular(6),
@@ -332,12 +387,12 @@ class _InningsHeader extends StatelessWidget {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 6),
                     // Team avatar + name
                     Row(
                       children: [
                         Container(
-                          width: 32, height: 32,
+                          width: 28, height: 28,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             gradient: LinearGradient(
@@ -356,19 +411,19 @@ class _InningsHeader extends StatelessWidget {
                                   : '?',
                               style: const TextStyle(
                                 color: _C.accent,
-                                fontSize: 13,
+                                fontSize: 12,
                                 fontWeight: FontWeight.w800,
                               ),
                             ),
                           ),
                         ),
-                        const SizedBox(width: 10),
+                        const SizedBox(width: 8),
                         Expanded(
                           child: Text(
                             battingTeam,
                             style: const TextStyle(
                               color: Colors.white,
-                              fontSize: 17,
+                              fontSize: 16,
                               fontWeight: FontWeight.w800,
                               letterSpacing: -0.2,
                             ),
@@ -381,23 +436,21 @@ class _InningsHeader extends StatelessWidget {
                 ),
               ),
 
-              const SizedBox(width: 16),
+              const SizedBox(width: 14),
 
               // Right: score
               if (loading)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: SizedBox(
-                    width: 18, height: 18,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: _C.accent,
-                    ),
+                SizedBox(
+                  width: 18, height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: _C.accent,
                   ),
                 )
               else
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     // Runs / Wickets
                     Row(
@@ -408,7 +461,7 @@ class _InningsHeader extends StatelessWidget {
                           '$totalRuns',
                           style: const TextStyle(
                             color: _C.orange,
-                            fontSize: 38,
+                            fontSize: 32,
                             fontWeight: FontWeight.w900,
                             height: 1,
                             letterSpacing: -1,
@@ -418,16 +471,17 @@ class _InningsHeader extends StatelessWidget {
                           '/$totalWickets',
                           style: TextStyle(
                             color: Colors.white.withOpacity(0.7),
-                            fontSize: 24,
+                            fontSize: 20,
                             fontWeight: FontWeight.w700,
                             height: 1,
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 2),
                     // Overs
                     Row(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
                         Icon(Icons.sports_cricket,
                             color: Colors.white.withOpacity(0.22), size: 11),
@@ -462,9 +516,9 @@ class _TargetBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             colors: [
@@ -472,23 +526,23 @@ class _TargetBadge extends StatelessWidget {
               _C.orange.withOpacity(0.06),
             ],
           ),
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(9),
           border: Border.all(color: _C.orange.withOpacity(0.35)),
           boxShadow: [
-            BoxShadow(color: _C.orange.withOpacity(0.1), blurRadius: 10),
+            BoxShadow(color: _C.orange.withOpacity(0.1), blurRadius: 8),
           ],
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.flag_rounded, color: _C.orange, size: 13),
-            const SizedBox(width: 7),
+            Icon(Icons.flag_rounded, color: _C.orange, size: 11),
+            const SizedBox(width: 6),
             Text(
               'Target: $targetRuns',
               style: const TextStyle(
                 color: _C.orange,
                 fontWeight: FontWeight.w800,
-                fontSize: 13,
+                fontSize: 11,
                 letterSpacing: 0.2,
               ),
             ),
@@ -511,11 +565,11 @@ class _SectionDivider extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
       child: Row(
         children: [
           Container(
-            width: 3, height: 14,
+            width: 3, height: 12,
             decoration: BoxDecoration(
               color: color,
               borderRadius: BorderRadius.circular(2),
@@ -558,7 +612,7 @@ class _LoadingBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 32),
+      padding: const EdgeInsets.symmetric(vertical: 20),
       child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -616,7 +670,7 @@ class _BatsmenTable extends StatelessWidget {
       children: [
         // Table header row
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 10, 20, 6),
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
           child: Row(
             children: [
               const Expanded(
@@ -635,7 +689,22 @@ class _BatsmenTable extends StatelessWidget {
           ),
         ),
         Container(height: 1, color: Colors.white.withOpacity(0.06)),
-        ...sorted.map((b) => _BatsmanRow(b: b)),
+        // Each row gets its own FocusNode via _TvFocusableRow so the D-pad
+        // can move between batsmen individually. A stable key (player
+        // name + index) keeps each row's focus/scroll state attached to
+        // the same FocusNode across rebuilds even as sort order changes
+        // (e.g. when strike changes).
+        ...sorted.asMap().entries.map((entry) {
+          final index = entry.key;
+          final b = entry.value;
+          final name = (b['playerName'] ?? b['name'] ?? 'Unknown').toString();
+          return _TvFocusableRow(
+            key: ValueKey('batsman-$name-$index'),
+            debugLabel: 'Batsman-$name',
+            builder: (context, focused) =>
+                _focusHighlightWrap(focused: focused, child: _BatsmanRow(b: b)),
+          );
+        }),
       ],
     );
   }
@@ -668,7 +737,7 @@ class _BatsmanRow extends StatelessWidget {
         : Colors.white;
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 9),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       decoration: BoxDecoration(
         color: onStrike
             ? _C.accent.withOpacity(0.04)
@@ -681,6 +750,7 @@ class _BatsmanRow extends StatelessWidget {
         children: [
           // Player name cell
           Expanded(
+            flex: 3,
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
@@ -688,7 +758,7 @@ class _BatsmanRow extends StatelessWidget {
                 AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
                   width: 3,
-                  height: onStrike ? 28 : 0,
+                  height: onStrike ? 24 : 0,
                   decoration: BoxDecoration(
                     color: _C.orange,
                     borderRadius: BorderRadius.circular(2),
@@ -795,7 +865,7 @@ class _BowlersTable extends StatelessWidget {
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 10, 20, 6),
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
           child: Row(
             children: [
               const Expanded(
@@ -814,7 +884,19 @@ class _BowlersTable extends StatelessWidget {
           ),
         ),
         Container(height: 1, color: Colors.white.withOpacity(0.06)),
-        ...sorted.map((b) => _BowlerRow(b: b)),
+        // Each row gets its own FocusNode via _TvFocusableRow so the D-pad
+        // can move between bowlers individually.
+        ...sorted.asMap().entries.map((entry) {
+          final index = entry.key;
+          final b = entry.value;
+          final name = (b['playerName'] ?? b['name'] ?? 'Unknown').toString();
+          return _TvFocusableRow(
+            key: ValueKey('bowler-$name-$index'),
+            debugLabel: 'Bowler-$name',
+            builder: (context, focused) =>
+                _focusHighlightWrap(focused: focused, child: _BowlerRow(b: b)),
+          );
+        }),
       ],
     );
   }
@@ -847,7 +929,7 @@ class _BowlerRow extends StatelessWidget {
         : Colors.white.withOpacity(0.55);
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 9),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       decoration: BoxDecoration(
         color: isBowling ? _C.purple.withOpacity(0.05) : Colors.transparent,
         border: Border(
@@ -857,6 +939,7 @@ class _BowlerRow extends StatelessWidget {
       child: Row(
         children: [
           Expanded(
+            flex: 3,
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
@@ -864,7 +947,7 @@ class _BowlerRow extends StatelessWidget {
                 AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
                   width: 3,
-                  height: isBowling ? 28 : 0,
+                  height: isBowling ? 24 : 0,
                   decoration: BoxDecoration(
                     color: _C.purple,
                     borderRadius: BorderRadius.circular(2),
@@ -919,7 +1002,7 @@ class _TH extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 36,
+      width: 60,
       child: Text(
         text,
         textAlign: TextAlign.center,
@@ -944,7 +1027,7 @@ class _TD extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 36,
+      width: 60,
       child: Text(
         text,
         textAlign: TextAlign.center,
@@ -967,7 +1050,7 @@ class _EmptyDataRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Row(
         children: [
           Icon(Icons.info_outline_rounded,

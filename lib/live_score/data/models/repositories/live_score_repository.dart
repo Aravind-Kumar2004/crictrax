@@ -34,7 +34,18 @@ class LiveScoreRepository {
         .collection('batsmen')
         .snapshots();
   }
-
+  Stream<QuerySnapshot> watchScores(
+      String tournamentId, String matchId, String inningsId) {
+    return _db
+        .collection('tournaments')
+        .doc(tournamentId)
+        .collection('matches')
+        .doc(matchId)
+        .collection('innings')
+        .doc(inningsId)
+        .collection('scores')
+        .snapshots();
+  }
   Stream<QuerySnapshot> watchBowlers(
       String tournamentId, String matchId, String inningsId) {
     return _db

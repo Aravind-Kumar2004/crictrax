@@ -290,17 +290,17 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          HeroBanner(tournament: widget.tournament),
+          HeroBanner(
+            tournament: widget.tournament,
+            featuredMatch: _featuredLiveMatch,
+            onWatchLive: _openMatch,
+          ),
           StatisticsSection(
             teamsCount: _uniqueTeamsCount,
             matchesCount: _all.length,
             liveCount: _live.length,
             upcomingCount: _upcoming.length,
             completedCount: _completed.length,
-          ),
-          FeaturedLiveMatch(
-            match: _featuredLiveMatch,
-            onWatchLive: _openMatch,
           ),
           NextFixturesSection(
             upcomingMatches: _upcoming,

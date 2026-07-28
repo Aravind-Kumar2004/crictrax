@@ -57,7 +57,7 @@ class _AdBannerWidgetState extends State<AdBannerWidget>
   int _currentPage = 0;
 
   // ── Fixed TV banner height — never derived from image aspect ratio ────────
-  static const double _bannerHeight = 260.0;
+  static const double _bannerHeight = 200.0;
 
   static const _demoSlides = [
     AdSlide(
@@ -292,7 +292,7 @@ class _AdBannerWidgetState extends State<AdBannerWidget>
             );
           },
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 6),
         _buildDotIndicators(),
       ],
     );
@@ -407,19 +407,19 @@ class _AdSlideCard extends StatelessWidget {
               children: [
                 // LEFT (40%) — image panel, flush, no padding.
                 Expanded(
-                  flex: 40,
+                  flex: 45,
                   child: hasImage ? _buildImagePanel() : _buildImageFallback(),
                 ),
 
                 // CENTER (45%) — text content.
                 Expanded(
-                  flex: 45,
+                  flex: 40,
                   child: FadeTransition(
                     opacity: fadeAnim,
                     child: SlideTransition(
                       position: slideAnim,
                       child: Padding(
-                        padding: const EdgeInsets.fromLTRB(28, 22, 20, 20),
+                        padding: const EdgeInsets.fromLTRB(24, 12, 16, 12),
                         child: _buildTextBlock(),
                       ),
                     ),
@@ -431,8 +431,8 @@ class _AdSlideCard extends StatelessWidget {
                   flex: 15,
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 20,
+                      horizontal: 12,
+                      vertical: 10,
                     ),
                     child: _buildCtaColumn(),
                   ),
@@ -577,7 +577,7 @@ class _AdSlideCard extends StatelessWidget {
             ),
           ],
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 6),
 
         // Headline — 34px bold white
         Text(
@@ -586,14 +586,14 @@ class _AdSlideCard extends StatelessWidget {
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(
             color: Colors.white,
-            fontSize: 34,
+            fontSize: 28,
             fontWeight: FontWeight.w900,
             letterSpacing: 0.2,
             height: 1.1,
             shadows: [Shadow(color: Colors.black54, blurRadius: 8)],
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 4),
 
         // Description — 16px, 70% white
         Text(
@@ -607,7 +607,7 @@ class _AdSlideCard extends StatelessWidget {
             letterSpacing: 0.1,
           ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 6),
 
         // Feature bullets — 14px
         ...slide.features.map(
@@ -711,7 +711,7 @@ class _AdSlideCard extends StatelessWidget {
             child: Icon(slide.icon, color: slide.accentColor, size: 20),
           ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 6),
 
         // Powered by CRICTRAX
         Text(
