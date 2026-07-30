@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../../data/models/match_model.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 // ─── Design Tokens ────────────────────────────────────────────────────────────
 class _C {
@@ -22,30 +23,59 @@ class _DateTimeParts {
 }
 
 _DateTimeParts _parseMatchDate(dynamic value) {
-  if (value == null) return const _DateTimeParts(date: '—', time: '—');
-  DateTime? dt;
-  if (value is DateTime) dt = value;
-
-  if (dt == null && value is String) {
-    final s = value.trim();
-    if (s.isEmpty) return const _DateTimeParts(date: '—', time: '—');
-    final tsMatch = RegExp(r'seconds=(\d+)').firstMatch(s);
-    if (tsMatch != null) {
-      final seconds = int.tryParse(tsMatch.group(1) ?? '');
-      if (seconds != null) dt = DateTime.fromMillisecondsSinceEpoch(seconds * 1000);
-    }
-    if (dt == null) {
-      try { dt = DateTime.parse(s); } catch (_) {}
-    }
-    if (dt == null) return _DateTimeParts(date: s, time: '—');
+  if (value == null) {
+    return const _DateTimeParts(date: '—', time: '—');
   }
 
-  if (dt == null) return _DateTimeParts(date: value.toString(), time: '—');
+  DateTime? dt;
 
-  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  final dateStr = '${dt.day} ${months[dt.month - 1]} ${dt.year}';
-  final timeStr = '${dt.hour.toString().padLeft(2,'0')}:${dt.minute.toString().padLeft(2,'0')}';
-  return _DateTimeParts(date: dateStr, time: timeStr, raw: dt);
+  // Firestore Timestamp
+  if (value is Timestamp) {
+    dt = value.toDate();
+  }
+
+  // DateTime
+  else if (value is DateTime) {
+    dt = value;
+  }
+
+  // String
+  else if (value is String) {
+    final s = value.trim();
+
+    if (s.isNotEmpty) {
+      final tsMatch = RegExp(r'seconds=(\d+)').firstMatch(s);
+
+      if (tsMatch != null) {
+        final seconds = int.tryParse(tsMatch.group(1)!);
+        if (seconds != null) {
+          dt = DateTime.fromMillisecondsSinceEpoch(seconds * 1000);
+        }
+      }
+
+      if (dt == null) {
+        try {
+          dt = DateTime.parse(s);
+        } catch (_) {}
+      }
+    }
+  }
+
+  if (dt == null) {
+    return _DateTimeParts(date: value.toString(), time: '—');
+  }
+
+  const months = [
+    'Jan','Feb','Mar','Apr','May','Jun',
+    'Jul','Aug','Sep','Oct','Nov','Dec'
+  ];
+
+  return _DateTimeParts(
+    date: '${dt.day} ${months[dt.month - 1]} ${dt.year}',
+    time:
+    '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}',
+    raw: dt,
+  );
 }
 
 // ─── Sort Helper (UNCHANGED LOGIC) ────────────────────────────────────────────

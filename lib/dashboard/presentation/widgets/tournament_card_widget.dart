@@ -227,12 +227,12 @@ class _TournamentCardWidgetState extends State<TournamentCardWidget> {
                                       icon: Icons.location_city_rounded,
                                       text: t.city,
                                     ),
-                                    if (t.endDate != null) ...[
+                                    if (t.startDate != null && t.endDate != null) ...[
                                       const SizedBox(height: 4),
                                       TournamentInfoRow(
                                         icon: Icons.calendar_today_rounded,
                                         text:
-                                        'Ends ${_formatShortDate(t.endDate)}',
+                                        '${_formatShortDate(t.startDate)} - ${_formatShortDate(t.endDate)}',
                                       ),
                                     ],
                                   ],

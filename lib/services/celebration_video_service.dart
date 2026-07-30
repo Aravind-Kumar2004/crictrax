@@ -9,38 +9,77 @@ class CelebrationVideoService {
 
   bool _isPlaying = false;
 
+  VideoPlayerController? _controller;
+  BuildContext? _dialogContext;
+
   Future<void> showFour(BuildContext context) async {
     debugPrint("🏏 showFour() called");
     await _playVideo(context, 'assets/audio/commentary/four1.mp4');
   }
 
   Future<void> showSix(BuildContext context) async {
+    debugPrint("🏏 showSix() called");
     await _playVideo(context, 'assets/audio/commentary/six1.mp4');
   }
 
   Future<void> showWicket(BuildContext context) async {
+    debugPrint("🏏 showWicket() called");
     await _playVideo(context, 'assets/audio/commentary/wicket.mp4');
   }
 
-  Future<void> _playVideo(BuildContext context,
-      String assetPath,) async {
-    if (_isPlaying) return;
+  Future<void> _playVideo(
+      BuildContext context,
+      String assetPath,
+      ) async {
+    // Stop currently playing video
+    if (_isPlaying) {
+      debugPrint("⏹ Stopping previous celebration video");
+
+      try {
+        await _controller?.pause();
+
+        if (_dialogContext != null &&
+            Navigator.of(_dialogContext!, rootNavigator: true).canPop()) {
+          Navigator.of(_dialogContext!, rootNavigator: true).pop();
+        }
+
+        await _controller?.dispose();
+      } catch (e) {
+        debugPrint("Dispose Error: $e");
+      }
+
+      _controller = null;
+      _dialogContext = null;
+      _isPlaying = false;
+    }
 
     _isPlaying = true;
 
     final controller = VideoPlayerController.asset(assetPath);
+    _controller = controller;
 
     try {
       await controller.initialize();
-      controller.setLooping(false);
+      await controller.setLooping(false);
 
-      controller.addListener(() {
-        if (controller.value.isInitialized &&
+      controller.addListener(() async {
+        if (!controller.value.isInitialized) return;
+
+        final finished =
             controller.value.position >= controller.value.duration &&
-            !controller.value.isPlaying) {
-          if (Navigator.of(context, rootNavigator: true).canPop()) {
-            Navigator.of(context, rootNavigator: true).pop();
+                !controller.value.isPlaying;
+
+        if (finished) {
+          if (_dialogContext != null &&
+              Navigator.of(_dialogContext!, rootNavigator: true).canPop()) {
+            Navigator.of(_dialogContext!, rootNavigator: true).pop();
           }
+
+          await controller.dispose();
+
+          _controller = null;
+          _dialogContext = null;
+          _isPlaying = false;
         }
       });
 
@@ -52,25 +91,33 @@ class CelebrationVideoService {
         pageBuilder: (_, __, ___) {
           controller.play();
 
+          return Builder(
+            builder: (dialogContext) {
+              _dialogContext = dialogContext;
 
-          return Scaffold(
-            backgroundColor: Colors.black,
-            body: Center(
-              child: AspectRatio(
-                aspectRatio: controller.value.aspectRatio,
-                child: VideoPlayer(controller),
-              ),
-            ),
+              return Scaffold(
+                backgroundColor: Colors.black,
+                body: Center(
+                  child: AspectRatio(
+                    aspectRatio: controller.value.aspectRatio,
+                    child: VideoPlayer(controller),
+                  ),
+                ),
+              );
+            },
           );
         },
       );
-
-      await controller.dispose();
     } catch (e) {
       debugPrint("Celebration Video Error: $e");
-      await controller.dispose();
-    }
 
-    _isPlaying = false;
+      try {
+        await controller.dispose();
+      } catch (_) {}
+
+      _controller = null;
+      _dialogContext = null;
+      _isPlaying = false;
+    }
   }
 }

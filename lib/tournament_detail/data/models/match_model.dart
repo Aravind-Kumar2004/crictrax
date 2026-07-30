@@ -31,7 +31,7 @@ class TournamentMatchModel extends TournamentMatchEntity {
           ? data['batBowlFlag'] ?? 0
           : int.tryParse(data['batBowlFlag'].toString()) ?? 0,
       status: (data['status'] as String?) ?? 'scheduled',  // ← ADD
-      matchDate: data['matchDate'],
+      matchDate: data['scheduledAt'] ?? data['matchDate'],
     );
   }
 }

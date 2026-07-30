@@ -2419,8 +2419,8 @@ class _BroadcastBottomPanelState extends State<_BroadcastBottomPanel> {
           _previousWickets = totalWickets;
           _isFirstLoad = false;
         } else if (totalWickets > _previousWickets) {
-          CommentaryAudioService.instance.playWicket();
           CelebrationVideoService.instance.showWicket(context);
+          CommentaryAudioService.instance.playWicket();
           _previousWickets = totalWickets;
         }
 
@@ -4120,14 +4120,14 @@ class _BallByBallTrackerState extends State<_BallByBallTracker> {
         break;
 
       case 4:
-        CommentaryAudioService.instance.playFour();
         CelebrationVideoService.instance.showFour(context);
+        CommentaryAudioService.instance.playFour();
         break;
 
 
       case 6:
-        CommentaryAudioService.instance.playSix();
         CelebrationVideoService.instance.showSix(context);
+        CommentaryAudioService.instance.playSix();
         break;
     }
   }
